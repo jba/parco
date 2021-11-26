@@ -39,7 +39,7 @@ func TestParse(t *testing.T) {
 		Do(Is("identifier", isIdent), func(s *State) { s.Value.(*query).coll = s.Token() }),
 		Optional(And(
 			lit("limit"),
-			Commit,
+			Cut,
 			Do(Any, func(s *State) {
 				n, err := strconv.Atoi(s.Token())
 				if err != nil {

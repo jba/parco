@@ -57,7 +57,7 @@
      fmt.Printf("there were %d 'big's in the input\n", n)
 
 
-   Commit
+   Cut
 
    The Or combinator works by trying its first argument, and if that fails backtracking in the token
    stream and trying its next argument.
@@ -84,13 +84,13 @@ type State struct {
 	Value interface{}
 }
 
-// AtEOF reports whether the parse has exhausted all the tokens.
-func (s *State) AtEOF() bool {
+// atEOF reports whether the parse has exhausted all the tokens.
+func (s *State) atEOF() bool {
 	return s.pos >= len(s.toks)
 }
 
 func (s *State) current() string {
-	if s.AtEOF() {
+	if s.atEOF() {
 		return "end of input"
 	}
 	return strconv.Quote(s.toks[s.pos])
@@ -160,7 +160,7 @@ func parse(p Parser, s *State) (err error) {
 // Literal returns a parser that parses only its argument.
 func Literal(lit string) Parser {
 	return func(s *State) {
-		if s.AtEOF() || s.toks[s.pos] != lit {
+		if s.atEOF() || s.toks[s.pos] != lit {
 			s.Failf("expected %q, got %s", lit, s.current())
 		}
 		s.pos++
@@ -171,7 +171,7 @@ func Literal(lit string) Parser {
 // The name is used only for error messages.
 func Is(name string, pred func(s string) bool) Parser {
 	return func(s *State) {
-		if s.AtEOF() || !pred(s.toks[s.pos]) {
+		if s.atEOF() || !pred(s.toks[s.pos]) {
 			s.Failf("expected %s, got %s", name, s.current())
 		}
 		s.pos++
@@ -218,13 +218,13 @@ var (
 	// Empty parses the empty input.
 	Empty Parser = func(*State) {}
 
-	// Commit causes Or to stop trying alternatives on an error.
+	// Cut causes Or to stop trying alternatives on an error.
 	// See Or's documentation for more.
-	Commit Parser = func(s *State) { s.committed = true }
+	Cut Parser = func(s *State) { s.committed = true }
 
 	// Any parses any single token.
 	Any Parser = func(s *State) {
-		if s.AtEOF() {
+		if s.atEOF() {
 			s.Failf("unexpected end of unput")
 		}
 		s.pos++

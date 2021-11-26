@@ -1,2 +1,3 @@
-# parser
-A combinator-based parser in Go
+# parco
+
+A combinator-based parser in Go.

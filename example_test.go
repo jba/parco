@@ -31,6 +31,33 @@ func Example() {
 }
 
 func Example_calculator() {
+	eval := func(v parco.Value) (parco.Value, error) {
+		vs := v.([]parco.Value)
+		// Only one element: just the factor.
+		if len(vs) == 1 {
+			return vs[0], nil
+		}
+		// A slice of [op, arg] pairs.
+		f := vs[0].(float64)
+		for _, e := range vs[1].([]parco.Value) {
+			opArg := e.([]parco.Value)
+			arg := opArg[1].(float64)
+			switch opArg[0].(string) {
+			case "+":
+				f += arg
+			case "-":
+				f -= arg
+			case "*":
+				f *= arg
+			case "/":
+				f /= arg
+			default:
+				return nil, fmt.Errorf("bad op: %q", opArg[0])
+			}
+		}
+		return f, nil
+	}
+
 	factor := parco.Do(parco.Any, func(v parco.Value) (parco.Value, error) {
 		f, err := strconv.ParseFloat(v.(string), 64)
 		return f, err
@@ -42,34 +69,20 @@ func Example_calculator() {
 				parco.And(
 					parco.Or(parco.Lit("*"), parco.Lit("/")),
 					factor))),
-		func(v parco.Value) (parco.Value, error) {
-			vs := v.([]parco.Value)
-			// Only one element: just the factor.
-			if len(vs) == 1 {
-				return vs[0], nil
-			}
-			// A slice of [op, arg] pairs.
-			f := vs[0].(float64)
-			for _, e := range vs[1].([]parco.Value) {
-				opArg := e.([]parco.Value)
-				arg := opArg[1].(float64)
-				switch opArg[0].(string) {
-				case "*":
-					f *= arg
-				case "/":
-					f /= arg
-				default:
-					return nil, fmt.Errorf("bad op: %q", opArg[0])
-				}
-			}
-			return f, nil
-		})
+		eval)
+	expr := parco.Do(
+		parco.And(
+			term,
+			parco.Repeat(
+				parco.And(
+					parco.Or(parco.Lit("+"), parco.Lit("-")),
+					term))),
+		eval)
 
-	//expr := parco.List(term, parco.Or(parco.Lit("+"), parco.Lit("-")))
 	for _, in := range []string{
-		"2", "2 * 3", "2 * 3 / 4",
+		"2", "2 * 3", "2 * 3 / 4", "1 + 2 * 3",
 	} {
-		val, err := parco.Parse(term, strings.Fields(in))
+		val, err := parco.Parse(expr, strings.Fields(in))
 		if err != nil {
 			panic(err)
 		}
@@ -80,5 +93,6 @@ func Example_calculator() {
 	// 2 = 2
 	// 2 * 3 = 6
 	// 2 * 3 / 4 = 1.5
+	// 1 + 2 * 3 = 7
 
 }

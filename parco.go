@@ -75,65 +75,31 @@ import (
 type Value = interface{}
 
 // A Parser is a function that takes a state and returns some value.
-type Parser func(*state) (Value, error)
+type Parser func(*State) (Value, error)
 
-// state holds the state of the current parse.
-type state struct {
+// State holds the State of the current parse.
+type State struct {
 	toks       []string
 	start, pos int
 	committed  bool
 }
 
 // atEOF reports whether the parse has exhausted all the tokens.
-func (s *state) atEOF() bool {
+func (s *State) atEOF() bool {
 	return s.pos >= len(s.toks)
 }
 
-func (s *state) current() string {
+func (s *State) current() string {
 	if s.atEOF() {
 		return "end of input"
 	}
 	return strconv.Quote(s.toks[s.pos])
 }
 
-// // Values returns the list of values returned by parsers.
-// // It is designed to be called by functions passed as the second argument to Do.
-// func (s *State) Values() []interface{} {
-// 	return s.vals
-// }
-
-// Token returns the single token parsed by the  Parser given as the first argument to Do.
-// If no tokens were parsed, it returns the empty string.
-// If more than one token was parsed, it panics.
-// It is designed to be called by functions passed as the second argument to Do.
-// func (s *State) Token() string {
-// 	if s.pos-s.start > 1 {
-// 		panic("more than one token")
-// 	}
-// 	if s.pos == s.start {
-// 		return ""
-// 	}
-// 	return s.toks[s.start]
-// }
-
-type failure struct {
-	err error
-}
-
-// Fail terminates the parse immediately with the given error.
-// func (s *State) Fail(err error) {
-// 	panic(failure{err})
-// }
-
-// // Failf formats its arguments with fmt.Errorf, then calls Fail.
-// func (s *State) Failf(format string, args ...interface{}) {
-// 	s.Fail(fmt.Errorf(format, args...))
-// }
-
 // Parse uses the given Parser to parse the tokens. The value argument is put
 // the Value field of the State that is passed to user-defined functions.
 func (p Parser) Parse(tokens []string) (Value, error) {
-	s := &state{toks: tokens, pos: 0}
+	s := &State{toks: tokens, pos: 0}
 	val, err := p(s)
 	if err != nil {
 		return nil, err
@@ -146,7 +112,7 @@ func (p Parser) Parse(tokens []string) (Value, error) {
 
 // Lit returns a parser that parses only its argument.
 func Lit(lit string) Parser {
-	return func(s *state) (Value, error) {
+	return func(s *State) (Value, error) {
 		if s.atEOF() || s.toks[s.pos] != lit {
 			return nil, fmt.Errorf("expected %q, got %s", lit, s.current())
 		}
@@ -158,7 +124,7 @@ func Lit(lit string) Parser {
 // Is returns a parser that parses a single token for which pred returns true.
 // The name is used only for error messages.
 func Is(name string, pred func(s string) bool) Parser {
-	return func(s *state) (Value, error) {
+	return func(s *State) (Value, error) {
 		if s.atEOF() || !pred(s.toks[s.pos]) {
 			return nil, fmt.Errorf("expected %s, got %s", name, s.current())
 		}
@@ -171,7 +137,7 @@ func Is(name string, pred func(s string) bool) Parser {
 // and fails as soon as one of the parsers fails.
 // The parser returns a slice of the argument parsers' non-nil values.
 func And(parsers ...Parser) Parser {
-	return func(s *state) (Value, error) {
+	return func(s *State) (Value, error) {
 		var vals []Value
 		for _, p := range parsers {
 			val, err := p(s)
@@ -191,7 +157,7 @@ func And(parsers ...Parser) Parser {
 // The Commit parser modifies that behavior; if an argument parser calls Commit,
 // then Or fails as soon as that parser fails instead of trying the next argument.
 func Or(parsers ...Parser) Parser {
-	return func(s *state) (Value, error) {
+	return func(s *State) (Value, error) {
 		start := s.pos
 		defer func(c bool) { s.committed = c }(s.committed)
 		s.committed = false
@@ -212,14 +178,14 @@ func Or(parsers ...Parser) Parser {
 
 var (
 	// Empty parses the empty input and returns nil.
-	Empty Parser = func(*state) (Value, error) { return nil, nil }
+	Empty Parser = func(*State) (Value, error) { return nil, nil }
 
 	// Cut causes Or to stop trying alternatives on an error.
 	// See Or's documentation for more.
-	Cut Parser = func(s *state) (Value, error) { s.committed = true; return nil, nil }
+	Cut Parser = func(s *State) (Value, error) { s.committed = true; return nil, nil }
 
 	// Any parses any single token.
-	Any Parser = func(s *state) (Value, error) {
+	Any Parser = func(s *State) (Value, error) {
 		if s.atEOF() {
 			return nil, errors.New("unexpected end of unput")
 		}
@@ -241,7 +207,7 @@ func Repeat(p Parser) Parser {
 	// as we would like. Go is applicative-order, so the recursive call to Repeat happens
 	// immediately and we have infinite recursion. We must delay the recursion.
 	return Or(
-		And(p, func(s *state) (Value, error) { return Repeat(p)(s) }),
+		And(p, func(s *State) (Value, error) { return Repeat(p)(s) }),
 		Empty).Do(func(v Value) (Value, error) {
 		// v is either nil (from Empty),
 		// or []Value{vp} where vp is the value of p, if the nested Repeat is Empty,
@@ -283,7 +249,7 @@ func flatten(vs []Value) []Value {
 // Do first parses some tokens using p. If p succeeds, then it calls f with the
 // parse state and the value of p. The function's return value is the value of Do.
 func (p Parser) Do(f func(Value) (Value, error)) Parser {
-	return func(s *state) (Value, error) {
+	return func(s *State) (Value, error) {
 		val, err := p(s)
 		if err != nil {
 			return nil, err
@@ -293,7 +259,7 @@ func (p Parser) Do(f func(Value) (Value, error)) Parser {
 }
 
 func Ptr(p *Parser) Parser {
-	return func(s *state) (Value, error) {
+	return func(s *State) (Value, error) {
 		return (*p)(s)
 	}
 }

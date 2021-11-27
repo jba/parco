@@ -132,7 +132,7 @@ type failure struct {
 
 // Parse uses the given Parser to parse the tokens. The value argument is put
 // the Value field of the State that is passed to user-defined functions.
-func Parse(p Parser, tokens []string) (Value, error) {
+func (p Parser) Parse(tokens []string) (Value, error) {
 	s := &state{toks: tokens, pos: 0}
 	val, err := p(s)
 	if err != nil {
@@ -240,33 +240,30 @@ func Repeat(p Parser) Parser {
 	//  Or(And(p, Repeat(p)), Empty)
 	// as we would like. Go is applicative-order, so the recursive call to Repeat happens
 	// immediately and we have infinite recursion. We must delay the recursion.
-	return Do(
-		Or(
-			And(p, func(s *state) (Value, error) { return Repeat(p)(s) }),
-			Empty),
-		func(v Value) (Value, error) {
-			// v is either nil (from Empty),
-			// or []Value{vp} where vp is the value of p, if the nested Repeat is Empty,
-			// or []Value{vp, vr} where vr is the value of the nested Repeat.
-			if v == nil {
-				return nil, nil
-			}
-			vs := v.([]Value)
-			if len(vs) == 1 {
-				return v, nil
-			}
-			return append([]Value{vs[0]}, vs[1].([]Value)...), nil
-		})
+	return Or(
+		And(p, func(s *state) (Value, error) { return Repeat(p)(s) }),
+		Empty).Do(func(v Value) (Value, error) {
+		// v is either nil (from Empty),
+		// or []Value{vp} where vp is the value of p, if the nested Repeat is Empty,
+		// or []Value{vp, vr} where vr is the value of the nested Repeat.
+		if v == nil {
+			return nil, nil
+		}
+		vs := v.([]Value)
+		if len(vs) == 1 {
+			return v, nil
+		}
+		return append([]Value{vs[0]}, vs[1].([]Value)...), nil
+	})
 }
 
 // List returns a parser that parses a non-empty list of items separate by sep.
 // The parser returns a slice of the items' values, ignoring the seps' values.
 func List(item, sep Parser) Parser {
-	return Do(
-		And(item, Repeat(
-			And(Do(sep, func(Value) (Value, error) { return nil, nil }),
-				item))),
-		func(v Value) (Value, error) {
+	return And(item, Repeat(
+		And(sep.Do(func(Value) (Value, error) { return nil, nil }),
+			item))).
+		Do(func(v Value) (Value, error) {
 			return flatten(v.([]Value)), nil
 		})
 }
@@ -285,7 +282,7 @@ func flatten(vs []Value) []Value {
 
 // Do first parses some tokens using p. If p succeeds, then it calls f with the
 // parse state and the value of p. The function's return value is the value of Do.
-func Do(p Parser, f func(Value) (Value, error)) Parser {
+func (p Parser) Do(f func(Value) (Value, error)) Parser {
 	return func(s *state) (Value, error) {
 		val, err := p(s)
 		if err != nil {

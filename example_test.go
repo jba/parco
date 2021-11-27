@@ -14,14 +14,12 @@ func Example() {
 	p := parco.And(
 		parco.Lit("the"),
 		parco.Or(
-			parco.Do(
-				parco.Repeat(parco.Lit("big")),
-				func(v parco.Value) (parco.Value, error) {
-					return fmt.Sprintf("big^%d", len(v.([]parco.Value))), nil
-				}),
+			parco.Repeat(parco.Lit("big")).Do(func(v parco.Value) (parco.Value, error) {
+				return fmt.Sprintf("big^%d", len(v.([]parco.Value))), nil
+			}),
 			parco.Lit("small")),
 		parco.Lit("dog"))
-	val, err := parco.Parse(p, strings.Fields("the big big big dog"))
+	val, err := p.Parse(strings.Fields("the big big big dog"))
 	if err != nil {
 		panic(err)
 	}
@@ -63,37 +61,28 @@ func Example_calculator() {
 		lit          = parco.Lit
 		or           = parco.Or
 		and          = parco.And
-		do           = parco.Do
 		repeat       = parco.Repeat
 	)
 	type value = parco.Value
 
 	factor = or(
-		do(parco.Any, func(v value) (value, error) {
-			f, err := strconv.ParseFloat(v.(string), 64)
-			return f, err
+		parco.Any.Do(func(v value) (value, error) {
+			return strconv.ParseFloat(v.(string), 64)
 		}),
-		do(
-			and(lit("-"), parco.Ptr(&factor)),
-			func(v value) (value, error) {
-				return -v.([]value)[1].(float64), nil
-			}),
-		do(and(lit("("), parco.Ptr(&expr), lit(")")),
-			func(v value) (value, error) {
-				return v.([]value)[1], nil
-			}))
+		and(lit("-"), parco.Ptr(&factor)).Do(func(v value) (value, error) {
+			return -v.([]value)[1].(float64), nil
+		}),
+		and(lit("("), parco.Ptr(&expr), lit(")")).Do(func(v value) (value, error) {
+			return v.([]value)[1], nil
+		}))
 
-	term := do(
-		and(factor, repeat(and(or(lit("*"), lit("/")), factor))),
-		eval)
-	expr = do(
-		and(term, repeat(and(or(lit("+"), lit("-")), term))),
-		eval)
+	term := and(factor, repeat(and(or(lit("*"), lit("/")), factor))).Do(eval)
+	expr = and(term, repeat(and(or(lit("+"), lit("-")), term))).Do(eval)
 
 	for _, in := range []string{
 		"2", "- 3", "2 * 3", "2 * - 3", "2 * 3 / 4", "1 + 2 * 3", "( 1 + 2 ) * 3", "( ( 3 ) )",
 	} {
-		val, err := parco.Parse(expr, strings.Fields(in))
+		val, err := expr.Parse(strings.Fields(in))
 		if err != nil {
 			panic(err)
 		}

@@ -74,7 +74,7 @@ func TestParse(t *testing.T) {
 		},
 		{
 			name: "Do",
-			p:    Do(Lit("foo"), func(v Value) (Value, error) { return strings.ToUpper(v.(string)), nil }),
+			p:    Lit("foo").Do(func(v Value) (Value, error) { return strings.ToUpper(v.(string)), nil }),
 			in:   "foo",
 			want: "FOO",
 		},
@@ -158,7 +158,7 @@ func TestParse(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := Parse(test.p, strings.Fields(test.in))
+			got, err := test.p.Parse(strings.Fields(test.in))
 			if err != nil {
 				if test.wantErr != "" {
 					if !strings.Contains(err.Error(), test.wantErr) {
@@ -201,48 +201,41 @@ func TestParseQuery(t *testing.T) {
 		limit   int
 	}
 
-	Int := Do(Any, func(v Value) (Value, error) {
+	Int := Any.Do(func(v Value) (Value, error) {
 		return strconv.Atoi(v.(string))
 	})
 
-	limitClause := Do(
-		And(Lit("limit"), Cut, Int),
-		func(v Value) (Value, error) {
-			return v.([]Value)[1], nil
-		})
+	limitClause := And(Lit("limit"), Cut, Int).Do(func(v Value) (Value, error) {
+		return v.([]Value)[1], nil
+	})
 
-	p := Do(
-		And(Do(
-			And(
-				Lit("select"),
-				Do(
-					Or(Lit("*"), List(Is("identifier", isIdent), Lit(","))),
-					func(v Value) (Value, error) {
-						q := &query{}
-						if _, ok := v.(string); !ok {
-							for _, id := range v.([]Value) {
-								q.selects = append(q.selects, id.(string))
-							}
-						}
-						return q, nil
-					}),
-				Lit("from"),
-				Is("identifier", isIdent)),
+	p := And(And(
+		Lit("select"),
+		Or(Lit("*"), List(Is("identifier", isIdent), Lit(","))).Do(
 			func(v Value) (Value, error) {
-				vs := v.([]Value)
-				q := vs[1].(*query)
-				q.coll = vs[3].(string)
+				q := &query{}
+				if _, ok := v.(string); !ok {
+					for _, id := range v.([]Value) {
+						q.selects = append(q.selects, id.(string))
+					}
+				}
 				return q, nil
 			}),
-			Opt(limitClause)),
-		func(v Value) (Value, error) {
-			vs := v.([]Value)
-			q := vs[0].(*query)
-			if len(vs) > 1 {
-				q.limit = vs[1].(int)
-			}
-			return q, nil
-		})
+		Lit("from"),
+		Is("identifier", isIdent)).Do(func(v Value) (Value, error) {
+		vs := v.([]Value)
+		q := vs[1].(*query)
+		q.coll = vs[3].(string)
+		return q, nil
+	}),
+		Opt(limitClause)).Do(func(v Value) (Value, error) {
+		vs := v.([]Value)
+		q := vs[0].(*query)
+		if len(vs) > 1 {
+			q.limit = vs[1].(int)
+		}
+		return q, nil
+	})
 	for _, test := range []struct {
 		in   string
 		want query
@@ -281,7 +274,7 @@ func TestParseQuery(t *testing.T) {
 			err: `strconv.Atoi: parsing "b": invalid syntax`,
 		},
 	} {
-		got, err := Parse(p, strings.Fields(test.in))
+		got, err := p.Parse(strings.Fields(test.in))
 		if err == nil {
 			if test.err != "" {
 				t.Errorf("%q: got success, want error", test.in)

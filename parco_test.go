@@ -105,7 +105,7 @@ func TestParse(t *testing.T) {
 			name: "Repeat empty",
 			p:    Repeat(Lit("x")),
 			in:   "",
-			want: []Value(nil),
+			want: nil,
 		},
 		{
 			name: "Repeat 1",
@@ -120,10 +120,40 @@ func TestParse(t *testing.T) {
 			want: []Value{"x", "x"},
 		},
 		{
+			name: "Repeat 3",
+			p:    Repeat(Any),
+			in:   "x y z",
+			want: []Value{"x", "y", "z"},
+		},
+		{
 			name: "List",
 			p:    List(Is("id", isIdent), Lit(",")),
 			in:   "a , b , c , d",
 			want: []Value{"a", "b", "c", "d"},
+		},
+		{
+			name: "without Cut",
+			p:    Or(And(Lit("a"), Lit("b")), Lit("c")),
+			in:   "a d",
+			// We'd like "expected b",but we get this instead:
+			wantErr: `parse failed at "a"`,
+		},
+		{
+			name:    "Cut",
+			p:       Or(And(Lit("a"), Cut, Lit("b")), Lit("c")),
+			in:      "a d",
+			wantErr: `expected "b"`,
+		},
+		{
+			name: "nested Cut",
+			// Inner cut doesn't affect outer Or.
+			p: Or(
+				And(
+					Or(And(Lit("a"), Cut, Lit("b")), Lit("c")),
+					Lit("d")),
+				Lit("e")),
+			in:      "f",
+			wantErr: "parse failed",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -135,7 +165,7 @@ func TestParse(t *testing.T) {
 					}
 					return
 				}
-				t.Fatalf("got %v, want success", err)
+				t.Fatalf("got '%v', want success", err)
 			}
 			if test.wantErr != "" {
 				t.Fatalf("got success, want error containing %q", test.wantErr)
@@ -162,8 +192,6 @@ func TestFlatten(t *testing.T) {
 		}
 	}
 }
-
-// TODO: test nested Or with commit.
 
 // func TestParseQuery(t *testing.T) {
 // 	type query struct {

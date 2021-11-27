@@ -239,25 +239,17 @@ func Repeat(p Parser) Parser {
 	// We can't write
 	//  Or(And(p, Repeat(p)), Empty)
 	// as we would like. Go is applicative-order, so the recursive call to Repeat happens
-	// immediately and we have infinite recursion. We must delay the recursion, which
-	// we could do with `func(s *State) Value { return Repeat(p)(s) }`.
-	// Another problem is that the return value would be a nested slice instead of a flat
-	// one.
-	// So it is cleaner to write this as a loop.
-	return func(s *state) (Value, error) {
-		var vals []Value
-		or := Or(p, Empty)
-		for {
-			val, err := or(s)
-			if err != nil {
-				return nil, err
+	// immediately and we have infinite recursion. We must delay the recursion.
+	return Do(
+		Or(
+			And(p, func(s *state) (Value, error) { return Repeat(p)(s) }),
+			Empty),
+		func(v Value) (Value, error) {
+			if v == nil {
+				return nil, nil
 			}
-			if val == nil {
-				return vals, nil
-			}
-			vals = append(vals, val)
-		}
-	}
+			return flatten(v.([]Value)), nil
+		})
 }
 
 // List returns a parser that parses a non-empty list of items separate by sep.

@@ -58,29 +58,40 @@ func Example_calculator() {
 		return f, nil
 	}
 
-	factor := parco.Do(parco.Any, func(v parco.Value) (parco.Value, error) {
-		f, err := strconv.ParseFloat(v.(string), 64)
-		return f, err
-	})
-	term := parco.Do(
-		parco.And(
-			factor,
-			parco.Repeat(
-				parco.And(
-					parco.Or(parco.Lit("*"), parco.Lit("/")),
-					factor))),
+	var (
+		expr, factor parco.Parser
+		lit          = parco.Lit
+		or           = parco.Or
+		and          = parco.And
+		do           = parco.Do
+		repeat       = parco.Repeat
+	)
+	type value = parco.Value
+
+	factor = or(
+		do(parco.Any, func(v value) (value, error) {
+			f, err := strconv.ParseFloat(v.(string), 64)
+			return f, err
+		}),
+		do(
+			and(lit("-"), parco.Ptr(&factor)),
+			func(v value) (value, error) {
+				return -v.([]value)[1].(float64), nil
+			}),
+		do(and(lit("("), parco.Ptr(&expr), lit(")")),
+			func(v value) (value, error) {
+				return v.([]value)[1], nil
+			}))
+
+	term := do(
+		and(factor, repeat(and(or(lit("*"), lit("/")), factor))),
 		eval)
-	expr := parco.Do(
-		parco.And(
-			term,
-			parco.Repeat(
-				parco.And(
-					parco.Or(parco.Lit("+"), parco.Lit("-")),
-					term))),
+	expr = do(
+		and(term, repeat(and(or(lit("+"), lit("-")), term))),
 		eval)
 
 	for _, in := range []string{
-		"2", "2 * 3", "2 * 3 / 4", "1 + 2 * 3",
+		"2", "- 3", "2 * 3", "2 * - 3", "2 * 3 / 4", "1 + 2 * 3", "( 1 + 2 ) * 3", "( ( 3 ) )",
 	} {
 		val, err := parco.Parse(expr, strings.Fields(in))
 		if err != nil {
@@ -91,8 +102,11 @@ func Example_calculator() {
 
 	// Output:
 	// 2 = 2
+	// - 3 = -3
 	// 2 * 3 = 6
+	// 2 * - 3 = -6
 	// 2 * 3 / 4 = 1.5
 	// 1 + 2 * 3 = 7
-
+	// ( 1 + 2 ) * 3 = 9
+	// ( ( 3 ) ) = 3
 }

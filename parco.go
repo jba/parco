@@ -245,9 +245,9 @@ func Repeat(p Parser) Parser {
 			And(p, func(s *state) (Value, error) { return Repeat(p)(s) }),
 			Empty),
 		func(v Value) (Value, error) {
-			// v is either nil (from Empty), or []Value{vp}, if the nested Repeat is Empty,
-			// or []Value{vp, vr}
-			// where vp is the value of p and vr is the value of the nested Repeat.
+			// v is either nil (from Empty),
+			// or []Value{vp} where vp is the value of p, if the nested Repeat is Empty,
+			// or []Value{vp, vr} where vr is the value of the nested Repeat.
 			if v == nil {
 				return nil, nil
 			}
@@ -292,5 +292,11 @@ func Do(p Parser, f func(Value) (Value, error)) Parser {
 			return nil, err
 		}
 		return f(val)
+	}
+}
+
+func Ptr(p *Parser) Parser {
+	return func(s *state) (Value, error) {
+		return (*p)(s)
 	}
 }

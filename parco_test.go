@@ -16,8 +16,19 @@ func TestParse(t *testing.T) {
 		p       Parser
 		in      string
 		want    Value
-		wantErr bool
+		wantErr string // error string must contain this
 	}{
+		{
+			name: "Empty",
+			p:    Empty,
+			want: nil,
+		},
+		{
+			name: "Any",
+			p:    Any,
+			in:   "x",
+			want: "x",
+		},
 		{
 			name: "Lit",
 			p:    Lit("foo"),
@@ -25,31 +36,130 @@ func TestParse(t *testing.T) {
 			want: "foo",
 		},
 		{
+			name:    "Lit fail",
+			p:       Lit("foo"),
+			in:      "bar",
+			wantErr: `expected "foo"`,
+		},
+		{
+			name:    "unconsumed",
+			p:       Lit("foo"),
+			in:      "foo bar",
+			wantErr: `unconsumed input starting at "bar"`,
+		},
+		{
+			name: "Is",
+			p:    Is("ident", isIdent),
+			in:   "alpha",
+			want: "alpha",
+		},
+		{
+			name:    "Is fail",
+			p:       Is("ident", isIdent),
+			in:      "123",
+			wantErr: "expected ident",
+		},
+		{
 			name: "And",
 			p:    And(Lit("foo"), Lit("bar")),
 			in:   "foo bar",
 			want: []Value{"foo", "bar"},
 		},
-		// {
-		// 	name: "Do",
-		// 	p:    Do(Lit("foo"), func(_ *State, v Value) Value {
-
+		{
+			name: "nested And",
+			p:    And(Lit("foo"), And(Lit("bar"), Lit("baz")), Lit("boo")),
+			in:   "foo bar baz boo",
+			want: []Value{"foo", []Value{"bar", "baz"}, "boo"},
+		},
+		{
+			name: "Do",
+			p:    Do(Lit("foo"), func(v Value) (Value, error) { return strings.ToUpper(v.(string)), nil }),
+			in:   "foo",
+			want: "FOO",
+		},
+		{
+			name: "Or a",
+			p:    Or(Lit("a"), Lit("b")),
+			in:   "a",
+			want: "a",
+		},
+		{
+			name: "Or b",
+			p:    Or(Lit("a"), Lit("b")),
+			in:   "b",
+			want: "b",
+		},
+		{
+			name:    "Or fail",
+			p:       Or(Lit("a"), Lit("b")),
+			in:      "c",
+			wantErr: `parse failed at "c"`,
+		},
+		{
+			name: "Or empty",
+			p:    And(Or(Lit("a"), Empty), Lit("c")),
+			in:   "c",
+			want: []Value{"c"},
+		},
+		{
+			name: "Repeat empty",
+			p:    Repeat(Lit("x")),
+			in:   "",
+			want: []Value(nil),
+		},
+		{
+			name: "Repeat 1",
+			p:    Repeat(Lit("x")),
+			in:   "x",
+			want: []Value{"x"},
+		},
+		{
+			name: "Repeat 2",
+			p:    Repeat(Lit("x")),
+			in:   "x x",
+			want: []Value{"x", "x"},
+		},
+		{
+			name: "List",
+			p:    List(Is("id", isIdent), Lit(",")),
+			in:   "a , b , c , d",
+			want: []Value{"a", "b", "c", "d"},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := Parse(test.p, strings.Fields(test.in))
 			if err != nil {
-				if test.wantErr {
+				if test.wantErr != "" {
+					if !strings.Contains(err.Error(), test.wantErr) {
+						t.Fatalf("got '%v', wanted error containing %q", err, test.wantErr)
+					}
 					return
 				}
 				t.Fatalf("got %v, want success", err)
 			}
-			if test.wantErr {
-				t.Fatal("got success, want error")
+			if test.wantErr != "" {
+				t.Fatalf("got success, want error containing %q", test.wantErr)
 			}
 			if diff := cmp.Diff(test.want, got); diff != "" {
 				t.Errorf("mismatch (-want, +got)\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestFlatten(t *testing.T) {
+	for _, test := range []struct {
+		in, want []Value
+	}{
+		{nil, nil},
+		{[]Value{1, 2, 3}, []Value{1, 2, 3}},
+		{[]Value{1, []Value{2, 3, 4}, 5}, []Value{1, 2, 3, 4, 5}},
+		{[]Value{1, []Value{[]Value{2, 3}, 4, 5}, 6}, []Value{1, 2, 3, 4, 5, 6}},
+	} {
+		got := flatten(test.in)
+		if !cmp.Equal(got, test.want) {
+			t.Errorf("got %v, want %v", got, test.want)
+		}
 	}
 }
 

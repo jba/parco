@@ -74,7 +74,7 @@ import (
 
 type Value = interface{}
 
-// A Parser is a function that takes a State and returns some value.
+// A Parser is a function that takes a state and returns some value.
 type Parser func(*state) (Value, error)
 
 // state holds the state of the current parse.
@@ -206,7 +206,7 @@ func Or(parsers ...Parser) Parser {
 			}
 			s.pos = start
 		}
-		return nil, fmt.Errorf("parse failed at %q", s.current())
+		return nil, fmt.Errorf("parse failed at %s", s.current())
 	}
 }
 
@@ -264,15 +264,24 @@ func Repeat(p Parser) Parser {
 // The parser returns a slice of the items' values, ignoring the seps' values.
 func List(item, sep Parser) Parser {
 	return Do(
-		And(item, Repeat(Do(
-			And(sep, item),
-			func(v Value) (Value, error) { return v.([]Value)[1], nil }))),
+		And(item, Repeat(
+			And(Do(sep, func(Value) (Value, error) { return nil, nil }),
+				item))),
 		func(v Value) (Value, error) {
-			// v is a pair of [item, slice of items].
-			// Flatten it.
-			vals := v.([]Value)
-			return append([]Value{vals[0]}, vals[1].([]Value)...), nil
+			return flatten(v.([]Value)), nil
 		})
+}
+
+func flatten(vs []Value) []Value {
+	var r []Value
+	for _, v := range vs {
+		if s, ok := v.([]Value); ok {
+			r = append(r, flatten(s)...)
+		} else {
+			r = append(r, v)
+		}
+	}
+	return r
 }
 
 // Do first parses some tokens using p. If p succeeds, then it calls f with the

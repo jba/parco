@@ -67,6 +67,7 @@
 package parco
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 )
@@ -74,22 +75,21 @@ import (
 type Value = interface{}
 
 // A Parser is a function that takes a State and returns some value.
-type Parser func(*State) Value
+type Parser func(*state) (Value, error)
 
-// State holds the state of the current parse.
-type State struct {
+// state holds the state of the current parse.
+type state struct {
 	toks       []string
 	start, pos int
 	committed  bool
-	Values     []Value
 }
 
 // atEOF reports whether the parse has exhausted all the tokens.
-func (s *State) atEOF() bool {
+func (s *state) atEOF() bool {
 	return s.pos >= len(s.toks)
 }
 
-func (s *State) current() string {
+func (s *state) current() string {
 	if s.atEOF() {
 		return "end of input"
 	}
@@ -106,37 +106,37 @@ func (s *State) current() string {
 // If no tokens were parsed, it returns the empty string.
 // If more than one token was parsed, it panics.
 // It is designed to be called by functions passed as the second argument to Do.
-func (s *State) Token() string {
-	if s.pos-s.start > 1 {
-		panic("more than one token")
-	}
-	if s.pos == s.start {
-		return ""
-	}
-	return s.toks[s.start]
-}
+// func (s *State) Token() string {
+// 	if s.pos-s.start > 1 {
+// 		panic("more than one token")
+// 	}
+// 	if s.pos == s.start {
+// 		return ""
+// 	}
+// 	return s.toks[s.start]
+// }
 
 type failure struct {
 	err error
 }
 
 // Fail terminates the parse immediately with the given error.
-func (s *State) Fail(err error) {
-	panic(failure{err})
-}
+// func (s *State) Fail(err error) {
+// 	panic(failure{err})
+// }
 
-// Failf formats its arguments with fmt.Errorf, then calls Fail.
-func (s *State) Failf(format string, args ...interface{}) {
-	s.Fail(fmt.Errorf(format, args...))
-}
+// // Failf formats its arguments with fmt.Errorf, then calls Fail.
+// func (s *State) Failf(format string, args ...interface{}) {
+// 	s.Fail(fmt.Errorf(format, args...))
+// }
 
 // Parse uses the given Parser to parse the tokens. The value argument is put
 // the Value field of the State that is passed to user-defined functions.
 func Parse(p Parser, tokens []string) (Value, error) {
-	s := &State{toks: tokens, pos: 0}
-	val, err := parse(p, s)
+	s := &state{toks: tokens, pos: 0}
+	val, err := p(s)
 	if err != nil {
-		return val, err
+		return nil, err
 	}
 	if s.pos != len(s.toks) {
 		return nil, fmt.Errorf("unconsumed input starting at %s", s.current())
@@ -144,60 +144,45 @@ func Parse(p Parser, tokens []string) (Value, error) {
 	return val, nil
 }
 
-func parse(p Parser, s *State) (value Value, err error) {
-	defer func() {
-		if x := recover(); x != nil {
-			if f, ok := x.(failure); ok {
-				value = nil
-				err = f.err
-			} else {
-				panic(x)
-			}
-		}
-	}()
-	return p(s), nil
-}
-
 // Lit returns a parser that parses only its argument.
 func Lit(lit string) Parser {
-	return func(s *State) Value {
+	return func(s *state) (Value, error) {
 		if s.atEOF() || s.toks[s.pos] != lit {
-			s.Failf("expected %q, got %s", lit, s.current())
+			return nil, fmt.Errorf("expected %q, got %s", lit, s.current())
 		}
 		s.pos++
-		return s.toks[s.pos-1]
+		return s.toks[s.pos-1], nil
 	}
 }
 
 // Is returns a parser that parses a single token for which pred returns true.
 // The name is used only for error messages.
 func Is(name string, pred func(s string) bool) Parser {
-	return func(s *State) Value {
+	return func(s *state) (Value, error) {
 		if s.atEOF() || !pred(s.toks[s.pos]) {
-			s.Failf("expected %s, got %s", name, s.current())
+			return nil, fmt.Errorf("expected %s, got %s", name, s.current())
 		}
 		s.pos++
-		return s.toks[s.pos-1]
+		return s.toks[s.pos-1], nil
 	}
 }
 
 // And returns a parser that invokes its argument parsers in succession,
 // and fails as soon as one of the parsers fails.
-// The parser returns a slice of the argument parsers' values.
+// The parser returns a slice of the argument parsers' non-nil values.
 func And(parsers ...Parser) Parser {
-	return func(s *State) Value {
-		defer func(vs []Value) {
-			s.Values = vs
-		}(s.Values)
-		s.Values = nil
+	return func(s *state) (Value, error) {
+		var vals []Value
 		for _, p := range parsers {
-			val, err := parse(p, s)
+			val, err := p(s)
 			if err != nil {
-				s.Fail(err)
+				return nil, err
 			}
-			s.Values = append(s.Values, val)
+			if val != nil {
+				vals = append(vals, val)
+			}
 		}
-		return s.Values
+		return vals, nil
 	}
 }
 
@@ -206,41 +191,40 @@ func And(parsers ...Parser) Parser {
 // The Commit parser modifies that behavior; if an argument parser calls Commit,
 // then Or fails as soon as that parser fails instead of trying the next argument.
 func Or(parsers ...Parser) Parser {
-	return func(s *State) Value {
+	return func(s *state) (Value, error) {
 		start := s.pos
 		defer func(c bool) { s.committed = c }(s.committed)
 		s.committed = false
 
 		for _, p := range parsers {
-			val, err := parse(p, s)
-			if err == nil {
-				return val
+			val, err := p(s)
+			if err != nil && s.committed {
+				return nil, err
 			}
-			if s.committed {
-				s.Fail(err)
+			if err == nil {
+				return val, nil
 			}
 			s.pos = start
 		}
-		s.Failf("parse failed at %q", s.current())
-		panic("unreachable")
+		return nil, fmt.Errorf("parse failed at %q", s.current())
 	}
 }
 
 var (
 	// Empty parses the empty input and returns nil.
-	Empty Parser = func(*State) Value { return nil }
+	Empty Parser = func(*state) (Value, error) { return nil, nil }
 
 	// Cut causes Or to stop trying alternatives on an error.
 	// See Or's documentation for more.
-	Cut Parser = func(s *State) Value { s.committed = true; return nil }
+	Cut Parser = func(s *state) (Value, error) { s.committed = true; return nil, nil }
 
 	// Any parses any single token.
-	Any Parser = func(s *State) Value {
+	Any Parser = func(s *state) (Value, error) {
 		if s.atEOF() {
-			s.Failf("unexpected end of unput")
+			return nil, errors.New("unexpected end of unput")
 		}
 		s.pos++
-		return s.toks[s.pos-1]
+		return s.toks[s.pos-1], nil
 	}
 )
 
@@ -260,13 +244,16 @@ func Repeat(p Parser) Parser {
 	// Another problem is that the return value would be a nested slice instead of a flat
 	// one.
 	// So it is cleaner to write this as a loop.
-	return func(s *State) Value {
+	return func(s *state) (Value, error) {
 		var vals []Value
 		or := Or(p, Empty)
 		for {
-			val := or(s)
+			val, err := or(s)
+			if err != nil {
+				return nil, err
+			}
 			if val == nil {
-				return vals
+				return vals, nil
 			}
 			vals = append(vals, val)
 		}
@@ -279,23 +266,23 @@ func List(item, sep Parser) Parser {
 	return Do(
 		And(item, Repeat(Do(
 			And(sep, item),
-			func(_ *State, v Value) Value { return v.([]Value)[1] }))),
-		func(_ *State, v Value) Value {
+			func(v Value) (Value, error) { return v.([]Value)[1], nil }))),
+		func(v Value) (Value, error) {
 			// v is a pair of [item, slice of items].
 			// Flatten it.
 			vals := v.([]Value)
-			return append([]Value{vals[0]}, vals[1].([]Value)...)
+			return append([]Value{vals[0]}, vals[1].([]Value)...), nil
 		})
 }
 
 // Do first parses some tokens using p. If p succeeds, then it calls f with the
 // parse state and the value of p. The function's return value is the value of Do.
-func Do(p Parser, f func(*State, Value) Value) Parser {
-	return func(s *State) Value {
-		val, err := parse(p, s)
+func Do(p Parser, f func(Value) (Value, error)) Parser {
+	return func(s *state) (Value, error) {
+		val, err := p(s)
 		if err != nil {
-			s.Fail(err)
+			return nil, err
 		}
-		return f(s, val)
+		return f(val)
 	}
 }

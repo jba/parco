@@ -15,8 +15,8 @@ func Example() {
 		parco.Or(
 			parco.Do(
 				parco.Repeat(parco.Lit("big")),
-				func(s *parco.State, v parco.Value) parco.Value {
-					return fmt.Sprintf("big^%d", len(v.([]parco.Value)))
+				func(v parco.Value) (parco.Value, error) {
+					return fmt.Sprintf("big^%d", len(v.([]parco.Value))), nil
 				}),
 			parco.Lit("small")),
 		parco.Lit("dog"))

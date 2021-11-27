@@ -120,10 +120,10 @@ func TestParse(t *testing.T) {
 			want: []Value{"x", "x"},
 		},
 		{
-			name: "Repeat 3",
-			p:    Repeat(Any),
-			in:   "x y z",
-			want: []Value{"x", "y", "z"},
+			name: "Repeat multi",
+			p:    Repeat(And(Any, Any)),
+			in:   "a b c d e f g h",
+			want: []Value{[]Value{"a", "b"}, []Value{"c", "d"}, []Value{"e", "f"}, []Value{"g", "h"}},
 		},
 		{
 			name: "List",
@@ -278,17 +278,6 @@ func TestFlatten(t *testing.T) {
 // 				t.Errorf("%q, error:\ngot:  %s\nwant: %s", test.in, g, test.err)
 // 			}
 // 		}
-// 	}
-// }
-
-// func TestRepeat(t *testing.T) {
-// 	p := Repeat(Lit("x"))
-// 	var xs []string
-// 	for i := 0; i < 3; i++ {
-// 		if err := Parse(p, xs, nil); err != nil {
-// 			t.Fatal(err)
-// 		}
-// 		xs = append(xs, "x")
 // 	}
 // }
 

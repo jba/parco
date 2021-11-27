@@ -245,10 +245,17 @@ func Repeat(p Parser) Parser {
 			And(p, func(s *state) (Value, error) { return Repeat(p)(s) }),
 			Empty),
 		func(v Value) (Value, error) {
+			// v is either nil (from Empty), or []Value{vp}, if the nested Repeat is Empty,
+			// or []Value{vp, vr}
+			// where vp is the value of p and vr is the value of the nested Repeat.
 			if v == nil {
 				return nil, nil
 			}
-			return flatten(v.([]Value)), nil
+			vs := v.([]Value)
+			if len(vs) == 1 {
+				return v, nil
+			}
+			return append([]Value{vs[0]}, vs[1].([]Value)...), nil
 		})
 }
 

@@ -11,19 +11,20 @@ import (
 
 func Example() {
 	p := parco.And(
-		parco.Literal("the"),
+		parco.Lit("the"),
 		parco.Or(
 			parco.Do(
-				parco.Repeat(parco.Literal("big")),
-				func(s *parco.State) { *(s.Value.(*int)) = len(s.Tokens()) }),
-			parco.Literal("small")),
-		parco.Literal("dog"))
-	var n int
-	err := parco.Parse(p, strings.Fields("the big big big dog"), &n)
+				parco.Repeat(parco.Lit("big")),
+				func(s *parco.State, v parco.Value) parco.Value {
+					return fmt.Sprintf("big^%d", len(v.([]parco.Value)))
+				}),
+			parco.Lit("small")),
+		parco.Lit("dog"))
+	val, err := parco.Parse(p, strings.Fields("the big big big dog"))
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("there are %d 'big's in the input.\n", n)
+	fmt.Println(val)
 
-	// Output: there are 3 'big's in the input.
+	// Output: [the big^3 dog]
 }

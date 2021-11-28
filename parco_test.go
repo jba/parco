@@ -163,8 +163,8 @@ func TestParse(t *testing.T) {
 		},
 		{
 			name: "Do",
-			p: Word("foo").Do(func(v Value) (Value, error) {
-				return strings.ToUpper(v.(string)), nil
+			p: Word("foo").Do(func(v Value) Value {
+				return strings.ToUpper(v.(string))
 			}),
 			in:   "foo",
 			want: "FOO",
@@ -373,36 +373,32 @@ func TestParseQuery(t *testing.T) {
 
 	ident := Regexp("id", `[_\pL][_\pL\p{Nd}]*`)
 
-	limitClause := And(Word("limit"), Cut, Int).Do(func(v Value) (Value, error) {
-		return v.([]Value)[1], nil
-	})
+	limitClause := And(Word("limit"), Cut, Int).Do(func(vs []Value) Value { return vs[1] })
 
 	p := And(And(
 		Word("select"),
 		Or(Equal("*"), List(ident, Equal(","))).Do(
-			func(v Value) (Value, error) {
+			func(v Value) Value {
 				q := &query{}
 				if _, ok := v.(string); !ok {
 					for _, id := range v.([]Value) {
 						q.selects = append(q.selects, id.(string))
 					}
 				}
-				return q, nil
+				return q
 			}),
 		Word("from"),
-		ident).Do(func(v Value) (Value, error) {
-		vs := v.([]Value)
+		ident).Do(func(vs []Value) Value {
 		q := vs[1].(*query)
 		q.coll = vs[3].(string)
-		return q, nil
+		return q
 	}),
-		Optional(limitClause)).Do(func(v Value) (Value, error) {
-		vs := v.([]Value)
+		Optional(limitClause)).Do(func(vs []Value) Value {
 		q := vs[0].(*query)
 		if len(vs) > 1 {
 			q.limit = vs[1].(int64)
 		}
-		return q, nil
+		return q
 	})
 	for _, test := range []struct {
 		in   string

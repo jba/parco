@@ -45,8 +45,8 @@
 	 p := And(
 	   Word("the"),
 	   Or(
-			Repeat(Word("big")).Do(func(v Value) (Value, error) {
-				return fmt.Sprintf("big^%d", len(v.([]Value))), nil
+			Repeat(Word("big")).Do(func(v []Value) Value {
+				return fmt.Sprintf("big^%d", len(v))
 			}),
 		    Word("small")),
 	   Word("dog"))
@@ -89,6 +89,7 @@ package parco
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -398,15 +399,101 @@ func flatten(vs []Value) []Value {
 	return r
 }
 
+// A DoFunc is a function passed to Parser.Do.
+// It can have any of the following signatures:
+type DoFunc interface{}
+
 // Do first parses some tokens using p. If p succeeds, then it calls f with the
-// parse state and the value of p. The function's return value is the value of Do.
-func (p Parser) Do(f func(Value) (Value, error)) Parser {
+// parse state and the value of p. The function's return value is the value of
+// Do. Do panics if its argument does not have one of these signatures:
+//
+//   func(Value) (Value, error)
+// This is the most general signature. The signatures below are described by how
+// they map into this one.
+//
+//   func(Value) Value
+// The returned error is nil.
+//
+//   func(Value)
+// The returned value is the argument value and the return error is nil.
+//
+//   func([]Value) (Value, error)
+//   func([]Value) Value
+//   func([]Value)
+// These panic if the argument is not a slice. Otherwise they behave like
+// their counterparts above.
+func (p Parser) Do(f interface{}) Parser {
 	return func(s *State) (Value, error) {
 		val, err := p(s)
 		if err != nil {
 			return nil, err
 		}
-		return f(val)
+		return convertDoFunc(f)(val)
+	}
+}
+
+var (
+	valueSliceType = reflect.TypeOf([]Value{})
+	valueType      = valueSliceType.Elem()
+	errorType      = reflect.TypeOf([]error{}).Elem()
+)
+
+func convertDoFunc(f interface{}) func(Value) (Value, error) {
+	t := reflect.TypeOf(f)
+	if t.Kind() != reflect.Func {
+		panic("argument to Do is not a function")
+	}
+	if t.NumIn() != 1 {
+		panic("argument to Do must be a function with one argument")
+	}
+	sliceArg := t.In(0) == valueSliceType
+	if !sliceArg && t.In(0) != valueType {
+		panic("argument to Do must be a function whose argument is a Value or []Value")
+	}
+	if t.NumOut() >= 1 && t.Out(0) != valueType {
+		panic("argument to Do must be a function whose first return value is parco.Value")
+	}
+	if t.NumOut() == 2 && t.Out(1) != errorType {
+		panic("argument to Do must be a function whose second return value is error")
+	}
+	switch t.NumOut() {
+	case 0:
+		if sliceArg {
+			g := f.(func([]Value))
+			return func(v Value) (Value, error) {
+				g(v.([]Value))
+				return v, nil
+			}
+		}
+		g := f.(func(Value))
+		return func(v Value) (Value, error) {
+			g(v)
+			return v, nil
+		}
+
+	case 1:
+		if sliceArg {
+			g := f.(func([]Value) Value)
+			return func(v Value) (Value, error) {
+				return g(v.([]Value)), nil
+			}
+		}
+		g := f.(func(Value) Value)
+		return func(v Value) (Value, error) {
+			return g(v), nil
+		}
+
+	case 2:
+		if sliceArg {
+			g := f.(func([]Value) (Value, error))
+			return func(v Value) (Value, error) {
+				return g(v.([]Value))
+			}
+		}
+		return f.(func(Value) (Value, error))
+
+	default:
+		panic("argument to Do can have at most two return values")
 	}
 }
 

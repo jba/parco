@@ -12,8 +12,8 @@ func Example() {
 	p := parco.And(
 		parco.Word("the"),
 		parco.Or(
-			parco.Repeat(parco.Word("big")).Do(func(v parco.Value) (parco.Value, error) {
-				return fmt.Sprintf("big^%d", len(v.([]parco.Value))), nil
+			parco.Repeat(parco.Word("big")).Do(func(v []parco.Value) parco.Value {
+				return fmt.Sprintf("big^%d", len(v))
 			}),
 			parco.Word("small")),
 		parco.Word("dog"))
@@ -27,8 +27,7 @@ func Example() {
 }
 
 func Example_calculator() {
-	eval := func(v parco.Value) (parco.Value, error) {
-		vs := v.([]parco.Value)
+	eval := func(vs []parco.Value) (parco.Value, error) {
 		// Only one element: just the factor.
 		if len(vs) == 1 {
 			return vs[0], nil
@@ -65,11 +64,11 @@ func Example_calculator() {
 
 	factor = or(
 		parco.Float,
-		and(eq("-"), parco.Ptr(&factor)).Do(func(v value) (value, error) {
-			return -v.([]value)[1].(float64), nil
+		and(eq("-"), parco.Ptr(&factor)).Do(func(vs []value) value {
+			return -vs[1].(float64)
 		}),
-		and(eq("("), parco.Ptr(&expr), eq(")")).Do(func(v value) (value, error) {
-			return v.([]value)[1], nil
+		and(eq("("), parco.Ptr(&expr), eq(")")).Do(func(vs []value) value {
+			return vs[1]
 		}))
 
 	term := and(factor, repeat(and(or(eq("*"), eq("/")), factor))).Do(eval)

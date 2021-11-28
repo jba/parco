@@ -90,6 +90,7 @@ looking ahead only a single token. But you can put it anywhere you like.
 package parco
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -353,11 +354,18 @@ var (
 // Optional parses either what p parses, or nothing.
 // It is equivalent to Or(p, Empty).
 func Optional(p Parser) Parser {
+	if _, err := p.Parse(""); err == nil {
+		panic("Optional called with a parser that accepts the empty string; you don't need Optional")
+	}
 	return Or(p, Empty)
 }
 
 // Repeat calls p repeatedly until it fails.
 func Repeat(p Parser) Parser {
+	if _, err := p.Parse(""); err == nil {
+		panic("Repeat called with a parser that accepts the empty string; that will lead to a stack overflow")
+	}
+
 	// We can't write
 	//  Or(And(p, Repeat(p)), Empty)
 	// as we would like. Go is applicative-order, so the recursive call to Repeat happens
@@ -426,12 +434,16 @@ func flatten(vs []Value) []Value {
 // These panic if the argument is not a slice. Otherwise they behave like
 // their counterparts above.
 func (p Parser) Do(f interface{}) Parser {
+	g, err := convertDoFunc(f)
+	if err != nil {
+		panic(err)
+	}
 	return func(s *State) (Value, error) {
 		val, err := p(s)
 		if err != nil {
 			return nil, err
 		}
-		return convertDoFunc(f)(val)
+		return g(val)
 	}
 }
 
@@ -441,23 +453,23 @@ var (
 	errorType      = reflect.TypeOf([]error{}).Elem()
 )
 
-func convertDoFunc(f interface{}) func(Value) (Value, error) {
+func convertDoFunc(f interface{}) (func(Value) (Value, error), error) {
 	t := reflect.TypeOf(f)
 	if t.Kind() != reflect.Func {
-		panic("argument to Do is not a function")
+		return nil, errors.New("argument to Do is not a function")
 	}
 	if t.NumIn() != 1 {
-		panic("argument to Do must be a function with one argument")
+		return nil, errors.New("argument to Do must be a function with one argument")
 	}
 	sliceArg := t.In(0) == valueSliceType
 	if !sliceArg && t.In(0) != valueType {
-		panic("argument to Do must be a function whose argument is a Value or []Value")
+		return nil, errors.New("argument to Do must be a function whose argument is a Value or []Value")
 	}
 	if t.NumOut() >= 1 && t.Out(0) != valueType {
-		panic("argument to Do must be a function whose first return value is parco.Value")
+		return nil, errors.New("argument to Do must be a function whose first return value is parco.Value")
 	}
 	if t.NumOut() == 2 && t.Out(1) != errorType {
-		panic("argument to Do must be a function whose second return value is error")
+		return nil, errors.New("argument to Do must be a function whose second return value is error")
 	}
 	switch t.NumOut() {
 	case 0:
@@ -466,37 +478,37 @@ func convertDoFunc(f interface{}) func(Value) (Value, error) {
 			return func(v Value) (Value, error) {
 				g(v.([]Value))
 				return v, nil
-			}
+			}, nil
 		}
 		g := f.(func(Value))
 		return func(v Value) (Value, error) {
 			g(v)
 			return v, nil
-		}
+		}, nil
 
 	case 1:
 		if sliceArg {
 			g := f.(func([]Value) Value)
 			return func(v Value) (Value, error) {
 				return g(v.([]Value)), nil
-			}
+			}, nil
 		}
 		g := f.(func(Value) Value)
 		return func(v Value) (Value, error) {
 			return g(v), nil
-		}
+		}, nil
 
 	case 2:
 		if sliceArg {
 			g := f.(func([]Value) (Value, error))
 			return func(v Value) (Value, error) {
 				return g(v.([]Value))
-			}
+			}, nil
 		}
-		return f.(func(Value) (Value, error))
+		return f.(func(Value) (Value, error)), nil
 
 	default:
-		panic("argument to Do can have at most two return values")
+		return nil, errors.New("argument to Do can have at most two return values")
 	}
 }
 

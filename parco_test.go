@@ -3,6 +3,8 @@
 package parco
 
 import (
+	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode"
@@ -451,6 +453,66 @@ func TestParseQuery(t *testing.T) {
 			} else if g := err.Error(); !strings.Contains(g, test.err) {
 				t.Errorf("%q, error:\ngot:  %s\nwant: %s", test.in, g, test.err)
 			}
+		}
+	}
+}
+
+func TestPanicOnEmpty(t *testing.T) {
+	// Verify that Repeat and Optional panic if the parser it is given succeeds on the empty string.
+	t.Run("Repeat", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("wanted panic, didn't get one")
+			}
+		}()
+		Repeat(Regexp("digits", `\d*`))
+	})
+	t.Run("Optional", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("wanted panic, didn't get one")
+			}
+		}()
+		Optional(Regexp("digits", `\d*`))
+	})
+}
+
+func TestConvertDoFunc(t *testing.T) {
+	arg := []Value{1}
+	for _, test := range []struct {
+		f       interface{}
+		wantVal Value
+		wantErr error
+	}{
+		{func(v Value) (Value, error) { return 2, io.EOF }, 2, io.EOF},
+		{func(v Value) Value { return 2 }, 2, nil},
+		{func(v Value) {}, arg, nil},
+		{func(vs []Value) (Value, error) { return 2, io.EOF }, 2, io.EOF},
+		{func(vs []Value) Value { return 2 }, 2, nil},
+		{func(vs []Value) {}, arg, nil},
+	} {
+		gf, err := convertDoFunc(test.f)
+		if err != nil {
+			t.Fatalf("%v: %v", reflect.TypeOf(test.f), err)
+		}
+		gotVal, gotErr := gf(arg)
+		if !cmp.Equal(gotVal, test.wantVal) || gotErr != test.wantErr {
+			t.Errorf("%v: got (%v, %v), want (%v, %v)",
+				reflect.TypeOf(test.f), gotVal, gotErr, test.wantVal, test.wantErr)
+		}
+	}
+
+	for _, f := range []interface{}{
+		17,
+		func(int, int) {},
+		func(string) {},
+		func(Value) int { return 0 },
+		func(Value) (Value, int) { return nil, 0 },
+		func(Value) (Value, int, error) { return nil, 0, nil },
+	} {
+		_, err := convertDoFunc(f)
+		if err == nil {
+			t.Errorf("%v: got success, want error", reflect.TypeOf(f))
 		}
 	}
 }

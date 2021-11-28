@@ -25,7 +25,7 @@ The parser for that grammar looks like
 
 To parse a string, call Parse:
 
-     val, err := p.Parse("the big dog", nil)
+     val, err := p.Parse("the big dog")
 
 The value of this parse will be a slice of the input words:
 
@@ -37,12 +37,13 @@ Actions
 Every Parser returns a Value, which can be anything. (Value is an alias for
 interface{}.) The value of the top-level parser is returned by Parser.Parse,
 but you can modify or act upon any parser's value by associating an action
-with it. To do so, call its Do method with a function that takes a Value and
-returns (Value, error). The argument is the parser's value, and the returned
+with it. To do so, call its Do method with a function. The function can
+have a few different signatures; most generally, it takes a Value and returns
+(Value, error). The argument is the parser's value, and the returned
 value replaces it. Returning an error immediately fails the entire parse.
 
-For example, to replace consecutive  "big"s in the input string, we could
-modify the above parser like so:
+For example, to replace consecutive "big"s in the input string, we could modify
+the above parser like so (using a simpler, alternative function signature):
 
 	 p := And(
 	   Word("the"),
@@ -79,7 +80,7 @@ the parse to a particular choice. By adding Cut after "limit", like so:
 
      Or(And(Word("limit"), Cut, Int), Word("other"))
 
-then the parser will not backtrack past the cut, and the input "limit x" produces
+the parser will not backtrack past the cut, and the input "limit x" produces
 the error "expected integer".
 
 You will usually want to add Cut after the first token of a particular parsing

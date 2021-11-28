@@ -75,7 +75,7 @@ func Example_calculator() {
 	expr = and(term, repeat(and(or(eq("+"), eq("-")), term))).Do(eval)
 
 	for _, in := range []string{
-		"2", "- 3", "2 * 3", "2 * - 3", "2 * 3 / 4", "1 + 2 * 3", "( 1 + 2 ) * 3", "( ( 3 ) )",
+		"2", "- 3", "2 * 3", "2 * - 3", "2 * 3 / 4", "1 + 2 * 3", "( 1 + 2 ) * 3", "((3) )",
 	} {
 		val, err := expr.Parse(in)
 		if err != nil {
@@ -92,5 +92,5 @@ func Example_calculator() {
 	// 2 * 3 / 4 = 1.5
 	// 1 + 2 * 3 = 7
 	// ( 1 + 2 ) * 3 = 9
-	// ( ( 3 ) ) = 3
+	// ((3) ) = 3
 }

@@ -1,46 +1,48 @@
 // Copyright 2021 Jonathan Amsterdam.
 
-/* Package parco is a parser combinator library for Go.
-   It is suitable for parsing short texts, like embedded languages.
+/*
+Package parco is a parser combinator library for Go.
+It is suitable for parsing short texts, like embedded languages.
 
 
-   Basics
+Basics
 
-   First, construct the parser by using the combinator functions to
-   describe the grammar. For example, the simple grammar
+First, construct the parser by using the combinator functions to
+describe the grammar. For example, the simple grammar
 
-	   the (big* | small) dog
+    the (big* | small) dog
 
-   allows phrases like "the dog", "the big dog", "the big big dog", and "the small dog".
-   The parser for that grammar looks like
+allows phrases like "the dog", "the big dog", "the big big dog", and "the small dog".
+The parser for that grammar looks like
 
-	 p := And(
-	   Word("the"),
-	   Or(
-		 Repeat(Word("big")),
-		 Word("small")),
-	   Word("dog"))
+	p := And(
+	  Word("the"),
+	  Or(
+	    Repeat(Word("big")),
+	    Word("small"),
+      ),
+	  Word("dog"))
 
-   To parse a string, call Parse:
+To parse a string, call Parse:
 
      val, err := p.Parse("the big dog", nil)
 
-   The value of this parse will be a slice of the input words:
+The value of this parse will be a slice of the input words:
 
      ["the", "big", "dog"]
 
 
-   Actions
+Actions
 
-   Every Parser returns a Value, which can be anything. (Value is an alias for
-   interface{}.) The value of the top-level parser is returned by Parser.Parse,
-   but you can modify or act upon any parser's value by associating an action
-   with it. To do so, call its Do method with a function that takes a Value and
-   returns (Value, error). The argument is the parser's value, and the returned
-   value replaces it. Returning an error immediately fails the entire parse.
+Every Parser returns a Value, which can be anything. (Value is an alias for
+interface{}.) The value of the top-level parser is returned by Parser.Parse,
+but you can modify or act upon any parser's value by associating an action
+with it. To do so, call its Do method with a function that takes a Value and
+returns (Value, error). The argument is the parser's value, and the returned
+value replaces it. Returning an error immediately fails the entire parse.
 
-   For example, to replace consecutive  "big"s in the input string, we could
-   modify the above parser like so:
+For example, to replace consecutive  "big"s in the input string, we could
+modify the above parser like so:
 
 	 p := And(
 	   Word("the"),
@@ -51,39 +53,38 @@
 		    Word("small")),
 	   Word("dog"))
 
-   The value of p.Parse("the big big big dog") is
+The value of p.Parse("the big big big dog") is
 
      ["the", "big^3", "dog"]
 
 
-   Cut
+Cut
 
-   The Or combinator works by trying its first argument, and if that fails, then
-   backtracking in the input stream and trying its next argument. That can be
-   expensive, but the bigger problem is that errors are unhelpful. For example,
-   when the parser
+The Or combinator works by trying its first argument, and if that fails, then
+backtracking in the input stream and trying its next argument. That can be
+expensive, but the bigger problem is that errors are unhelpful. For example,
+when the parser
 
      Or(And(Word("limit"), Int), Word("other"))
 
-   is applied to "limit x", the resulting error is
+is applied to "limit x", the resulting error is
 
      parse failed at index 0 ("limit...")
 
-   The real problem is that the token after "limit" was not a valid integer, but that
-   error serves only to trigger the backtracking and isn't retained.
+The real problem is that the token after "limit" was not a valid integer, but that
+error serves only to trigger the backtracking and isn't retained.
 
-   Taking an idea from logic languages, parco provides a "cut" operator that commits
-   the parse to a particular choice. By adding Cut after "limit", like so:
+Taking an idea from logic languages, parco provides a "cut" operator that commits
+the parse to a particular choice. By adding Cut after "limit", like so:
 
      Or(And(Word("limit"), Cut, Int), Word("other"))
 
-   then the parser will not backtrack past the cut, and the input "limit x" produces
-   the error "expected integer".
+then the parser will not backtrack past the cut, and the input "limit x" produces
+the error "expected integer".
 
-   You will usually want to add Cut after the first token of a particular
-   parsing choice, because most modern formal languages are designed to be
-   parsed by looking ahead only a single token. But you can put it anywhere you
-   like.
+You will usually want to add Cut after the first token of a particular parsing
+choice, because most modern formal languages are designed to be parsed by
+looking ahead only a single token. But you can put it anywhere you like.
 */
 package parco
 
@@ -141,7 +142,8 @@ func (s *State) position() string {
 	return fmt.Sprintf("index %d (%q)", s.pos, t)
 }
 
-// A Parser is a function that takes a state and returns some value.
+// A Parser is a function that takes a state, tries to consume so input, and
+// returns some value.
 type Parser func(*State) (Value, error)
 
 // Parse uses the given Parser to parse the tokens. The value argument is put
@@ -162,7 +164,7 @@ func (p Parser) Parse(input string) (Value, error) {
 }
 
 // Skipping returns a parser that skips runes matching pred before each terminal
-// parser (Equal, EqualUnlessFollowedBy, One, Regexp, Word and While).
+// parser (Equal, EqualUnlessFollowedBy, Match, One, Regexp, Word and While).
 // If f is nil, no input is skipped.
 func Skipping(pred func(rune) bool, p Parser) Parser {
 	return func(s *State) (Value, error) {
@@ -187,8 +189,8 @@ func Equal(e string) Parser {
 	})
 }
 
-// EqualUnlessFollowedBy matches e, but only if it is not followed by a rune for
-// which pred returns true.
+// EqualUnlessFollowedBy returns a parser that matches e, but only if it is not
+// followed by a rune for which pred returns true.
 func EqualUnlessFollowedBy(e string, pred func(rune) bool) Parser {
 	return Match(strconv.Quote(e), func(s string) int {
 		if len(s) < len(e) {
@@ -302,7 +304,7 @@ func And(parsers ...Parser) Parser {
 
 // Or tries each of its argument parsers in turn on the same input, succeeding
 // as soon as the first succeeds and failing if they all fail.
-// The Commit parser modifies that behavior; if an argument parser calls Commit,
+// The Commit parser modifies that behavior: if an argument parser calls Commit,
 // then Or fails as soon as that parser fails instead of trying the next argument.
 func Or(parsers ...Parser) Parser {
 	return func(s *State) (Value, error) {
@@ -399,13 +401,13 @@ func flatten(vs []Value) []Value {
 	return r
 }
 
-// A DoFunc is a function passed to Parser.Do.
-// It can have any of the following signatures:
-type DoFunc interface{}
-
-// Do first parses some tokens using p. If p succeeds, then it calls f with the
-// parse state and the value of p. The function's return value is the value of
-// Do. Do panics if its argument does not have one of these signatures:
+// Do first parses some tokens using p. If p succeeds, then it calls f, which
+// must be a function, with the parse state and the value of p. The function's
+// return value is the value of Do. If the function returns an error, the parse
+// fails immediately.
+//
+// Do panics if its argument does not have one
+// of these signatures:
 //
 //   func(Value) (Value, error)
 // This is the most general signature. The signatures below are described by how
@@ -497,7 +499,7 @@ func convertDoFunc(f interface{}) func(Value) (Value, error) {
 	}
 }
 
-// Ptr returns a parser that invokes p.
+// Ptr returns a parser that invokes *p.
 // It is useful for creating recursive parsers.
 // See the calculator example for a typical use.
 func Ptr(p *Parser) Parser {

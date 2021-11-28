@@ -15,121 +15,268 @@
    The parser for that grammar looks like
 
 	 p := And(
-	   Literal("the"),
+	   Word("the"),
 	   Or(
-		 Repeat(Literal("big")),
-		 Literal("small")),
-	   Literal("dog"))
+		 Repeat(Word("big")),
+		 Word("small")),
+	   Word("dog"))
 
    To parse a string, call Parse:
 
-     err := Parse(p, strings.Fields("the big dog"), nil)
+     val, err := p.Parse("the big dog", nil)
 
-   Parse takes as its input a slice of strings. If you just want to split a
-   string on whitespace, you can use strings.Fields as is done here. For more
-   sophisticated uses you may want a lexer like github.com/jba/lexer.
+   The value of this parse will be a slice of the input words:
+
+     ["the", "big", "dog"]
 
 
    Actions
 
-   To associate actions with a parse, use the Do function to associate a
-   function with a parser. The function takes a State, which provides the
-   sequence of tokens that the parser traversed and also gives access to the
-   value passed as the third argument to Parse.
+   Every Parser returns a Value, which can be anything. (Value is an alias for
+   interface{}.) The value of the top-level parser is returned by Parser.Parse,
+   but you can modify or act upon any parser's value by associating an action
+   with it. To do so, call its Do method with a function that takes a Value and
+   returns (Value, error). The argument is the parser's value, and the returned
+   value replaces it. Returning an error immediately fails the entire parse.
 
-   For example, to count the number of "big"s in an input string, we could
+   For example, to replace consecutive  "big"s in the input string, we could
    modify the above parser like so:
 
 	 p := And(
-	   Literal("the"),
+	   Word("the"),
 	   Or(
-		 Do(Repeat(Literal("big")), func(s *State) { *(s.Value.(*int)) = len(s.Tokens()) }),
-		 Literal("small")),
-	   Literal("dog"))
+			Repeat(Word("big")).Do(func(v Value) (Value, error) {
+				return fmt.Sprintf("big^%d", len(v.([]Value))), nil
+			}),
+		    Word("small")),
+	   Word("dog"))
 
-   and invoke Parse like so:
+   The value of p.Parse("the big big big dog") is
 
-     var n int
-     err := Parse(p, ..., &n)
-     if err != nil {
-       return err
-     }
-     fmt.Printf("there were %d 'big's in the input\n", n)
+     ["the", "big^3", "dog"]
 
 
    Cut
 
-   The Or combinator works by trying its first argument, and if that fails backtracking in the token
-   stream and trying its next argument.
-   TODO: finish.
+   The Or combinator works by trying its first argument, and if that fails, then
+   backtracking in the input stream and trying its next argument. That can be
+   expensive, but the bigger problem is that errors are unhelpful. For example,
+   when the parser
 
+     Or(And(Word("limit"), Int), Word("other"))
+
+   is applied to "limit x", the resulting error is
+
+     parse failed at index 0 ("limit...")
+
+   The real problem is that the token after "limit" was not a valid integer, but that
+   error serves only to trigger the backtracking and isn't retained.
+
+   Taking an idea from logic languages, parco provides a "cut" operator that commits
+   the parse to a particular choice. By adding Cut after "limit", like so:
+
+     Or(And(Word("limit"), Cut, Int), Word("other"))
+
+   then the parser will not backtrack past the cut, and the input "limit x" produces
+   the error "expected integer".
+
+   You will usually want to add Cut after the first token of a particular
+   parsing choice, because most modern formal languages are designed to be
+   parsed by looking ahead only a single token. But you can put it anywhere you
+   like.
 */
 package parco
 
 import (
-	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
+// A Value is something returned from a parse.
 type Value = interface{}
+
+// State holds the state of the current parse.
+type State struct {
+	input      string
+	start, pos int
+	committed  bool
+	skipPred   func(rune) bool
+}
+
+func newState(input string) *State {
+	return &State{
+		input:    input,
+		pos:      0,
+		skipPred: unicode.IsSpace,
+	}
+}
+
+func (s *State) skip() {
+	if s.skipPred == nil {
+		return
+	}
+	for i, r := range s.input[s.pos:] {
+		if !s.skipPred(r) {
+			s.pos += i
+			return
+		}
+	}
+	s.pos = len(s.input)
+}
+
+func (s *State) position() string {
+	if s.pos == len(s.input) {
+		return "end of input"
+	}
+	const n = 5
+	t := s.input[s.pos:]
+	if len(t) > n {
+		t = t[:n] + "..."
+	}
+	return fmt.Sprintf("index %d (%q)", s.pos, t)
+}
 
 // A Parser is a function that takes a state and returns some value.
 type Parser func(*State) (Value, error)
 
-// State holds the State of the current parse.
-type State struct {
-	toks       []string
-	start, pos int
-	committed  bool
-}
-
-// atEOF reports whether the parse has exhausted all the tokens.
-func (s *State) atEOF() bool {
-	return s.pos >= len(s.toks)
-}
-
-func (s *State) current() string {
-	if s.atEOF() {
-		return "end of input"
-	}
-	return strconv.Quote(s.toks[s.pos])
-}
-
 // Parse uses the given Parser to parse the tokens. The value argument is put
 // the Value field of the State that is passed to user-defined functions.
-func (p Parser) Parse(tokens []string) (Value, error) {
-	s := &State{toks: tokens, pos: 0}
+// By default, whitespace in the input is skipped. Call Skipping to change
+// that behavior.
+func (p Parser) Parse(input string) (Value, error) {
+	s := newState(input)
 	val, err := p(s)
 	if err != nil {
 		return nil, err
 	}
-	if s.pos != len(s.toks) {
-		return nil, fmt.Errorf("unconsumed input starting at %s", s.current())
+	s.skip()
+	if s.pos != len(s.input) {
+		return nil, fmt.Errorf("unconsumed input starting at %s", s.position())
 	}
 	return val, nil
 }
 
-// Lit returns a parser that parses only its argument.
-func Lit(lit string) Parser {
+// Skipping returns a parser that skips runes matching pred before each terminal
+// parser (Equal, EqualUnlessFollowedBy, One, Regexp, Word and While).
+// If f is nil, no input is skipped.
+func Skipping(pred func(rune) bool, p Parser) Parser {
 	return func(s *State) (Value, error) {
-		if s.atEOF() || s.toks[s.pos] != lit {
-			return nil, fmt.Errorf("expected %q, got %s", lit, s.current())
-		}
-		s.pos++
-		return s.toks[s.pos-1], nil
+		defer func(f func(rune) bool) {
+			s.skipPred = f
+		}(s.skipPred)
+		s.skipPred = pred
+		return p(s)
 	}
 }
 
-// Is returns a parser that parses a single token for which pred returns true.
-// The name is used only for error messages.
-func Is(name string, pred func(s string) bool) Parser {
-	return func(s *State) (Value, error) {
-		if s.atEOF() || !pred(s.toks[s.pos]) {
-			return nil, fmt.Errorf("expected %s, got %s", name, s.current())
+// Equal returns a parser that matches the given string exactly.
+// Note that Equal will succeed even if the string is part of a larger
+// word. For example, Equal("foo") succeeds on "food", matching only "foo"
+// and leaving the "d" unconsumed. To match only the word "foo", use Word.
+func Equal(e string) Parser {
+	return Match(strconv.Quote(e), func(s string) int {
+		if strings.HasPrefix(s, e) {
+			return len(e)
 		}
-		s.pos++
-		return s.toks[s.pos-1], nil
+		return -1
+	})
+}
+
+// EqualUnlessFollowedBy matches e, but only if it is not followed by a rune for
+// which pred returns true.
+func EqualUnlessFollowedBy(e string, pred func(rune) bool) Parser {
+	return Match(strconv.Quote(e), func(s string) int {
+		if len(s) < len(e) {
+			return -1
+		}
+		if s[:len(e)] != e {
+			return -1
+		}
+		if len(s) == len(e) {
+			return len(e)
+		}
+		r, _ := utf8.DecodeRuneInString(s[len(e):])
+		if pred(r) {
+			return -1
+		}
+		return len(e)
+	})
+}
+
+// Word parses the given string, provided it is followed by the end of input or
+// a non-word character.
+//
+// Word(w) is equivalent to EqualUnlessFollowedBy(w, isWordChar)
+// where isWordChar returns true for underscore and for unicode letters and digits.
+func Word(w string) Parser {
+	return EqualUnlessFollowedBy(w, isWordChar)
+}
+
+func isWordChar(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// One matches a single rune for which pred returns true. The name
+// is used for error messages.
+func One(name string, pred func(rune) bool) Parser {
+	return Match(name, func(s string) int {
+		if !utf8.FullRuneInString(s) {
+			return -1
+		}
+		r, size := utf8.DecodeRuneInString(s)
+		if pred(r) {
+			return size
+		}
+		return -1
+	})
+}
+
+// While returns a parser that parses a non-empty sequence of runes for which
+// pred is true. The name is used for error messages.
+func While(name string, pred func(rune) bool) Parser {
+	return Match(name, func(s string) int {
+		for i, r := range s {
+			if !pred(r) {
+				if i == 0 {
+					return -1
+				}
+				return i
+			}
+		}
+		return len(s)
+	})
+}
+
+// Regexp returns a parser that matches input using the given regular expression.
+// The name is used for error messages.
+func Regexp(name, sre string) Parser {
+	re := regexp.MustCompile("^" + sre)
+	return Match(name, func(s string) int {
+		loc := re.FindStringIndex(s)
+		if loc == nil {
+			return -1
+		}
+		return loc[1]
+	})
+}
+
+// Match returns a parser that calls calls f on its input.
+// f should return the length of the matching string, or -1
+// if there is no match. The name is used for error messages.
+func Match(name string, f func(string) int) Parser {
+	return func(s *State) (Value, error) {
+		s.skip()
+		matchLen := f(s.input[s.pos:])
+		if matchLen < 0 {
+			return nil, fmt.Errorf("expected %s at %s", name, s.position())
+		}
+		start := s.pos
+		s.pos += matchLen
+		return s.input[start:s.pos], nil
 	}
 }
 
@@ -172,7 +319,7 @@ func Or(parsers ...Parser) Parser {
 			}
 			s.pos = start
 		}
-		return nil, fmt.Errorf("parse failed at %s", s.current())
+		return nil, fmt.Errorf("parse failed at %s", s.position())
 	}
 }
 
@@ -184,19 +331,24 @@ var (
 	// See Or's documentation for more.
 	Cut Parser = func(s *State) (Value, error) { s.committed = true; return nil, nil }
 
-	// Any parses any single token.
-	Any Parser = func(s *State) (Value, error) {
-		if s.atEOF() {
-			return nil, errors.New("unexpected end of unput")
-		}
-		s.pos++
-		return s.toks[s.pos-1], nil
-	}
+	// Int parses signed decimal integers.
+	// It accepts only the ASCII digits 0 through 9.
+	// Its value is an int64.
+	Int = Regexp("integer", `[+-]?[0-9]+`).Do(func(v Value) (Value, error) {
+		return strconv.ParseInt(v.(string), 10, 64)
+	})
+
+	// Float parses and returns a float64, using standard decimal notation.
+	Float = Regexp("floating-point number",
+		`[+-]?(\d+(\.\d*)?([Ee][+-]?\d+)?|\d*\.\d+([Ee][+-]?\d+)?)`).Do(
+		func(v Value) (Value, error) {
+			return strconv.ParseFloat(v.(string), 64)
+		})
 )
 
-// Opt parses either what p parses, or nothing.
+// Optional parses either what p parses, or nothing.
 // It is equivalent to Or(p, Empty).
-func Opt(p Parser) Parser {
+func Optional(p Parser) Parser {
 	return Or(p, Empty)
 }
 
@@ -258,6 +410,9 @@ func (p Parser) Do(f func(Value) (Value, error)) Parser {
 	}
 }
 
+// Ptr returns a parser that invokes p.
+// It is useful for creating recursive parsers.
+// See the calculator example for a typical use.
 func Ptr(p *Parser) Parser {
 	return func(s *State) (Value, error) {
 		return (*p)(s)

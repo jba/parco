@@ -4,22 +4,20 @@ package parco_test
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/jba/parco"
 )
 
 func Example() {
 	p := parco.And(
-		parco.Lit("the"),
+		parco.Word("the"),
 		parco.Or(
-			parco.Repeat(parco.Lit("big")).Do(func(v parco.Value) (parco.Value, error) {
+			parco.Repeat(parco.Word("big")).Do(func(v parco.Value) (parco.Value, error) {
 				return fmt.Sprintf("big^%d", len(v.([]parco.Value))), nil
 			}),
-			parco.Lit("small")),
-		parco.Lit("dog"))
-	val, err := p.Parse(strings.Fields("the big big big dog"))
+			parco.Word("small")),
+		parco.Word("dog"))
+	val, err := p.Parse("the big big big dog")
 	if err != nil {
 		panic(err)
 	}
@@ -58,7 +56,7 @@ func Example_calculator() {
 
 	var (
 		expr, factor parco.Parser
-		lit          = parco.Lit
+		eq           = parco.Equal
 		or           = parco.Or
 		and          = parco.And
 		repeat       = parco.Repeat
@@ -66,23 +64,21 @@ func Example_calculator() {
 	type value = parco.Value
 
 	factor = or(
-		parco.Any.Do(func(v value) (value, error) {
-			return strconv.ParseFloat(v.(string), 64)
-		}),
-		and(lit("-"), parco.Ptr(&factor)).Do(func(v value) (value, error) {
+		parco.Float,
+		and(eq("-"), parco.Ptr(&factor)).Do(func(v value) (value, error) {
 			return -v.([]value)[1].(float64), nil
 		}),
-		and(lit("("), parco.Ptr(&expr), lit(")")).Do(func(v value) (value, error) {
+		and(eq("("), parco.Ptr(&expr), eq(")")).Do(func(v value) (value, error) {
 			return v.([]value)[1], nil
 		}))
 
-	term := and(factor, repeat(and(or(lit("*"), lit("/")), factor))).Do(eval)
-	expr = and(term, repeat(and(or(lit("+"), lit("-")), term))).Do(eval)
+	term := and(factor, repeat(and(or(eq("*"), eq("/")), factor))).Do(eval)
+	expr = and(term, repeat(and(or(eq("+"), eq("-")), term))).Do(eval)
 
 	for _, in := range []string{
 		"2", "- 3", "2 * 3", "2 * - 3", "2 * 3 / 4", "1 + 2 * 3", "( 1 + 2 ) * 3", "( ( 3 ) )",
 	} {
-		val, err := expr.Parse(strings.Fields(in))
+		val, err := expr.Parse(in)
 		if err != nil {
 			panic(err)
 		}

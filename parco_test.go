@@ -3,8 +3,6 @@
 package parco
 
 import (
-	"io"
-	"reflect"
 	"strings"
 	"testing"
 	"unicode"
@@ -16,12 +14,12 @@ func TestWord(t *testing.T) {
 	p := Word("foo")
 	for _, test := range []struct {
 		in      string
-		want    Value
+		want    string
 		wantErr string
 	}{
-		{"", nil, `expected "foo"`},
+		{"", "", `expected "foo"`},
 		{"foo", "foo", ""},
-		{"food", nil, `expected "foo"`},
+		{"food", "", `expected "foo"`},
 		{" \t\n foo", "foo", ""},
 		{"foo bar", "foo", ""},
 		{"foo+bar", "foo", ""},
@@ -47,23 +45,52 @@ func TestWord(t *testing.T) {
 	}
 }
 
+type test[T any] struct {
+	name    string
+	p       Parser[T]
+	in      string
+	want    T
+	wantErr string // error string must contain this
+}
+
+func (s test[T]) run(t *testing.T) {
+	t.Run(s.name, func(t *testing.T) {
+		got, err := s.p.Parse(s.in)
+		if err != nil {
+			if s.wantErr != "" {
+				if !strings.Contains(err.Error(), s.wantErr) {
+					t.Fatalf("got '%v', wanted error containing %q", err, s.wantErr)
+				}
+				return
+			}
+			t.Fatalf("got '%v', want success", err)
+		}
+		if s.wantErr != "" {
+			t.Fatalf("got success, want error containing %q", s.wantErr)
+		}
+		if diff := cmp.Diff(s.want, got); diff != "" {
+			t.Errorf("mismatch (-want, +got)\n%s", diff)
+		}
+	})
+}
+
 func TestParse(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		p       Parser
-		in      string
-		want    Value
-		wantErr string // error string must contain this
-	}{
+	andComma := func(ps ...Parser[string]) Parser[string] {
+		return Do(And(ps...), func(v []string) string {
+			return strings.Join(v, ",")
+		})
+	}
+
+	for _, test := range []test[string]{
 		{
 			name: "Empty",
-			p:    Empty,
+			p:    Empty[string](),
 			in:   "",
-			want: nil,
+			want: "",
 		},
 		{
 			name:    "unconsumed",
-			p:       Empty,
+			p:       Empty[string](),
 			in:      "x",
 			wantErr: "unconsumed input",
 		},
@@ -72,18 +99,6 @@ func TestParse(t *testing.T) {
 			p:    Equal("foo"),
 			in:   "foo",
 			want: "foo",
-		},
-		{
-			name: "Equal2",
-			p:    And(Equal("foo"), Equal("d")),
-			in:   "food",
-			want: []Value{"foo", "d"},
-		},
-		{
-			name: "Equal3",
-			p:    And(Equal("foo"), Equal("d")),
-			in:   "  foo\td\n",
-			want: []Value{"foo", "d"},
 		},
 		{
 			name:    "Equal fail",
@@ -128,12 +143,6 @@ func TestParse(t *testing.T) {
 			want: "abc",
 		},
 		{
-			name: "While2",
-			p:    And(While("letters", unicode.IsLetter), One("digit", unicode.IsDigit)),
-			in:   "abc3",
-			want: []Value{"abc", "3"},
-		},
-		{
 			name:    "While fail",
 			p:       While("letters", unicode.IsLetter),
 			in:      "123",
@@ -146,28 +155,8 @@ func TestParse(t *testing.T) {
 			want: "abcabcabc",
 		},
 		{
-			name: "Regexp2",
-			p:    And(Regexp("abcs", `(abc)+`), Equal("abd")),
-			in:   "abcabcabd",
-			want: []Value{"abcabc", "abd"},
-		},
-		{
-			name: "And",
-			p:    And(Word("foo"), Word("bar")),
-			in:   "foo bar",
-			want: []Value{"foo", "bar"},
-		},
-		{
-			name: "nested And",
-			p:    And(Word("foo"), And(Word("bar"), Word("baz")), Word("boo")),
-			in:   "foo bar baz boo",
-			want: []Value{"foo", []Value{"bar", "baz"}, "boo"},
-		},
-		{
 			name: "Do",
-			p: Word("foo").Do(func(v Value) Value {
-				return strings.ToUpper(v.(string))
-			}),
+			p:    Do(Word("foo"), func(v string) string { return strings.ToUpper(v) }),
 			in:   "foo",
 			want: "FOO",
 		},
@@ -189,11 +178,55 @@ func TestParse(t *testing.T) {
 			in:      "c",
 			wantErr: `parse failed at index 0 ("c")`,
 		},
+	} {
+		test.run(t)
+	}
+
+	for _, test := range []test[[]string]{
+		{
+			name: "Equal2",
+			p:    And(Equal("foo"), Equal("d")),
+			in:   "food",
+			want: []string{"foo", "d"},
+		},
+		{
+			name: "Equal3",
+			p:    And(Equal("foo"), Equal("d")),
+			in:   "  foo\td\n",
+			want: []string{"foo", "d"},
+		},
+		{
+			name: "While2",
+			p:    And(While("letters", unicode.IsLetter), One("digit", unicode.IsDigit)),
+			in:   "abc3",
+			want: []string{"abc", "3"},
+		},
+		{
+			name: "Regexp2",
+			p:    And(Regexp("abcs", `(abc)+`), Equal("abd")),
+			in:   "abcabcabd",
+			want: []string{"abcabc", "abd"},
+		},
+		{
+			name: "And",
+			p:    And(Word("foo"), Word("bar")),
+			in:   "foo bar",
+			want: []string{"foo", "bar"},
+		},
+		{
+			name: "nested And",
+			p: And(
+				Word("foo"),
+				andComma(Word("bar"), Word("baz")),
+				Word("boo")),
+			in:   "foo bar baz boo",
+			want: []string{"foo", "bar,baz", "boo"},
+		},
 		{
 			name: "Or empty",
-			p:    And(Or(Word("a"), Empty), Word("c")),
+			p:    And(Or(Word("a"), Empty[string]()), Word("c")),
 			in:   "c",
-			want: []Value{"c"},
+			want: []string{"", "c"},
 		},
 		{
 			name: "Repeat empty",
@@ -205,36 +238,30 @@ func TestParse(t *testing.T) {
 			name: "Repeat 1",
 			p:    Repeat(Word("x")),
 			in:   "x",
-			want: []Value{"x"},
+			want: []string{"x"},
 		},
 		{
 			name: "Repeat 2",
 			p:    Repeat(Word("x")),
 			in:   "x x",
-			want: []Value{"x", "x"},
-		},
-		{
-			name: "Repeat multi",
-			p:    Repeat(And(One("letter", unicode.IsLetter), One("digit", unicode.IsDigit))),
-			in:   "a1c3e 5 g 7",
-			want: []Value{[]Value{"a", "1"}, []Value{"c", "3"}, []Value{"e", "5"}, []Value{"g", "7"}},
+			want: []string{"x", "x"},
 		},
 		{
 			name: "List",
 			p:    List(Regexp("id", `[a-z]+`), Equal(",")),
-			in:   "a, b, c, d",
-			want: []Value{"a", "b", "c", "d"},
+			in:   "a, b ,c , d",
+			want: []string{"a", "b", "c", "d"},
 		},
 		{
 			name: "without Cut",
-			p:    Or(And(Word("a"), Word("b")), Word("c")),
+			p:    Or(And(Word("a"), Word("b")), And(Word("c"), Word("d"))),
 			in:   "a d",
 			// We'd like "expected b",but we get this instead:
 			wantErr: `parse failed`,
 		},
 		{
 			name:    "Cut",
-			p:       Or(And(Word("a"), Cut, Word("b")), Word("c")),
+			p:       Or(And(Cut(Word("a")), Word("b")), And(Word("c"), Word("d"))),
 			in:      "a d",
 			wantErr: `expected "b"`,
 		},
@@ -243,9 +270,11 @@ func TestParse(t *testing.T) {
 			// Inner cut doesn't affect outer Or.
 			p: Or(
 				And(
-					Or(And(Word("a"), Cut, Word("b")), Word("c")),
+					Or(
+						andComma(Cut(Word("a")), Word("b")),
+						Word("c")),
 					Word("d")),
-				Word("e")),
+				And(Word("e"), Word("f"))),
 			in:      "f",
 			wantErr: "parse failed",
 		},
@@ -253,7 +282,7 @@ func TestParse(t *testing.T) {
 			name: "not Skipping",
 			p:    And(Word("notabs"), While("any", func(rune) bool { return true })),
 			in:   "notabs  \t\tx",
-			want: []Value{"notabs", "x"},
+			want: []string{"notabs", "x"},
 		},
 		{
 			name: "Skipping",
@@ -262,7 +291,7 @@ func TestParse(t *testing.T) {
 				Skipping(func(r rune) bool { return r == ' ' },
 					While("any", func(rune) bool { return true }))),
 			in:   "notabs  \t\tx",
-			want: []Value{"notabs", "\t\tx"},
+			want: []string{"notabs", "\t\tx"},
 		},
 		{
 			name: "Skipping nil",
@@ -271,28 +300,18 @@ func TestParse(t *testing.T) {
 				Skipping(nil,
 					While("any", func(rune) bool { return true }))),
 			in:   "notabs  \t\tx",
-			want: []Value{"notabs", "  \t\tx"},
+			want: []string{"notabs", "  \t\tx"},
 		},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := test.p.Parse(test.in)
-			if err != nil {
-				if test.wantErr != "" {
-					if !strings.Contains(err.Error(), test.wantErr) {
-						t.Fatalf("got '%v', wanted error containing %q", err, test.wantErr)
-					}
-					return
-				}
-				t.Fatalf("got '%v', want success", err)
-			}
-			if test.wantErr != "" {
-				t.Fatalf("got success, want error containing %q", test.wantErr)
-			}
-			if diff := cmp.Diff(test.want, got); diff != "" {
-				t.Errorf("mismatch (-want, +got)\n%s", diff)
-			}
-		})
+		test.run(t)
 	}
+
+	test[[][]string]{
+		name: "Repeat multi",
+		p:    Repeat(And(One("letter", unicode.IsLetter), One("digit", unicode.IsDigit))),
+		in:   "a1c3e 5 g 7",
+		want: [][]string{[]string{"a", "1"}, []string{"c", "3"}, []string{"e", "5"}, []string{"g", "7"}},
+	}.run(t)
 }
 
 func TestInt(t *testing.T) {
@@ -350,22 +369,6 @@ func TestFloat(t *testing.T) {
 	}
 }
 
-func TestFlatten(t *testing.T) {
-	for _, test := range []struct {
-		in, want []Value
-	}{
-		{nil, nil},
-		{[]Value{1, 2, 3}, []Value{1, 2, 3}},
-		{[]Value{1, []Value{2, 3, 4}, 5}, []Value{1, 2, 3, 4, 5}},
-		{[]Value{1, []Value{[]Value{2, 3}, 4, 5}, 6}, []Value{1, 2, 3, 4, 5, 6}},
-	} {
-		got := flatten(test.in)
-		if !cmp.Equal(got, test.want) {
-			t.Errorf("got %v, want %v", got, test.want)
-		}
-	}
-}
-
 func TestParseQuery(t *testing.T) {
 	type query struct {
 		selects []string
@@ -375,33 +378,38 @@ func TestParseQuery(t *testing.T) {
 
 	ident := Regexp("id", `[_\pL][_\pL\p{Nd}]*`)
 
-	limitClause := And(Word("limit"), Cut, Int).Do(func(vs []Value) Value { return vs[1] })
-
-	p := And(And(
+	selectClause := And2(
 		Word("select"),
-		Or(Equal("*"), List(ident, Equal(","))).Do(
-			func(v Value) Value {
-				q := &query{}
-				if _, ok := v.(string); !ok {
-					for _, id := range v.([]Value) {
-						q.selects = append(q.selects, id.(string))
-					}
-				}
-				return q
-			}),
-		Word("from"),
-		ident).Do(func(vs []Value) Value {
-		q := vs[1].(*query)
-		q.coll = vs[3].(string)
-		return q
-	}),
-		Optional(limitClause)).Do(func(vs []Value) Value {
-		q := vs[0].(*query)
-		if len(vs) > 1 {
-			q.limit = vs[1].(int64)
-		}
-		return q
-	})
+		Or(
+			Do(Equal("*"), func(string) []string { return nil }),
+			List(ident, Equal(","))),
+		func(_ string, v []string) *query {
+			return &query{selects: v}
+		})
+
+	fromClause := Do(
+		And(Word("from"), ident),
+		func(v []string) string {
+			return v[1]
+		})
+
+	limitClause := And2(
+		Cut(Word("limit")), Int,
+		func(_ string, v int64) int64 { return v })
+
+	p := And2(
+		And2(selectClause, fromClause, func(q *query, s string) *query {
+			q.coll = s
+			return q
+		}),
+		Optional(limitClause),
+		func(q *query, pi *int64) *query {
+			if pi != nil {
+				q.limit = *pi
+			}
+			return q
+		})
+
 	for _, test := range []struct {
 		in   string
 		want query
@@ -475,44 +483,4 @@ func TestPanicOnEmpty(t *testing.T) {
 		}()
 		Optional(Regexp("digits", `\d*`))
 	})
-}
-
-func TestConvertDoFunc(t *testing.T) {
-	arg := []Value{1}
-	for _, test := range []struct {
-		f       interface{}
-		wantVal Value
-		wantErr error
-	}{
-		{func(v Value) (Value, error) { return 2, io.EOF }, 2, io.EOF},
-		{func(v Value) Value { return 2 }, 2, nil},
-		{func(v Value) {}, arg, nil},
-		{func(vs []Value) (Value, error) { return 2, io.EOF }, 2, io.EOF},
-		{func(vs []Value) Value { return 2 }, 2, nil},
-		{func(vs []Value) {}, arg, nil},
-	} {
-		gf, err := convertDoFunc(test.f)
-		if err != nil {
-			t.Fatalf("%v: %v", reflect.TypeOf(test.f), err)
-		}
-		gotVal, gotErr := gf(arg)
-		if !cmp.Equal(gotVal, test.wantVal) || gotErr != test.wantErr {
-			t.Errorf("%v: got (%v, %v), want (%v, %v)",
-				reflect.TypeOf(test.f), gotVal, gotErr, test.wantVal, test.wantErr)
-		}
-	}
-
-	for _, f := range []interface{}{
-		17,
-		func(int, int) {},
-		func(string) {},
-		func(Value) int { return 0 },
-		func(Value) (Value, int) { return nil, 0 },
-		func(Value) (Value, int, error) { return nil, 0, nil },
-	} {
-		_, err := convertDoFunc(f)
-		if err == nil {
-			t.Errorf("%v: got success, want error", reflect.TypeOf(f))
-		}
-	}
 }

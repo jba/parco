@@ -90,18 +90,13 @@ looking ahead only a single token. But you can put it anywhere you like.
 package parco
 
 import (
-	"errors"
 	"fmt"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
-
-// A Value is something returned from a parse.
-type Value = interface{}
 
 // State holds the state of the current parse.
 type State struct {
@@ -146,21 +141,21 @@ func (s *State) position() string {
 
 // A Parser is a function that takes a state, tries to consume so input, and
 // returns some value.
-type Parser func(*State) (Value, error)
+type Parser[T any] func(*State) (T, error)
 
 // Parse uses the given Parser to parse the tokens. The value argument is put
 // the Value field of the State that is passed to user-defined functions.
 // By default, whitespace in the input is skipped. Call Skipping to change
 // that behavior.
-func (p Parser) Parse(input string) (Value, error) {
+func (p Parser[T]) Parse(input string) (z T, _ error) {
 	s := newState(input)
 	val, err := p(s)
 	if err != nil {
-		return nil, err
+		return z, err
 	}
 	s.skip()
 	if s.pos != len(s.input) {
-		return nil, fmt.Errorf("unconsumed input starting at %s", s.position())
+		return z, fmt.Errorf("unconsumed input starting at %s", s.position())
 	}
 	return val, nil
 }
@@ -168,8 +163,8 @@ func (p Parser) Parse(input string) (Value, error) {
 // Skipping returns a parser that skips runes matching pred before each terminal
 // parser (Equal, EqualUnlessFollowedBy, Match, One, Regexp, Word and While).
 // If f is nil, no input is skipped.
-func Skipping(pred func(rune) bool, p Parser) Parser {
-	return func(s *State) (Value, error) {
+func Skipping[T any](pred func(rune) bool, p Parser[T]) Parser[T] {
+	return func(s *State) (T, error) {
 		defer func(f func(rune) bool) {
 			s.skipPred = f
 		}(s.skipPred)
@@ -182,7 +177,7 @@ func Skipping(pred func(rune) bool, p Parser) Parser {
 // Note that Equal will succeed even if the string is part of a larger
 // word. For example, Equal("foo") succeeds on "food", matching only "foo"
 // and leaving the "d" unconsumed. To match only the word "foo", use Word.
-func Equal(e string) Parser {
+func Equal(e string) Parser[string] {
 	return Match(strconv.Quote(e), func(s string) int {
 		if strings.HasPrefix(s, e) {
 			return len(e)
@@ -193,7 +188,7 @@ func Equal(e string) Parser {
 
 // EqualUnlessFollowedBy returns a parser that matches e, but only if it is not
 // followed by a rune for which pred returns true.
-func EqualUnlessFollowedBy(e string, pred func(rune) bool) Parser {
+func EqualUnlessFollowedBy(e string, pred func(rune) bool) Parser[string] {
 	return Match(strconv.Quote(e), func(s string) int {
 		if len(s) < len(e) {
 			return -1
@@ -217,7 +212,7 @@ func EqualUnlessFollowedBy(e string, pred func(rune) bool) Parser {
 //
 // Word(w) is equivalent to EqualUnlessFollowedBy(w, isWordChar)
 // where isWordChar returns true for underscore and for unicode letters and digits.
-func Word(w string) Parser {
+func Word(w string) Parser[string] {
 	return EqualUnlessFollowedBy(w, isWordChar)
 }
 
@@ -227,7 +222,7 @@ func isWordChar(r rune) bool {
 
 // One matches a single rune for which pred returns true. The name
 // is used for error messages.
-func One(name string, pred func(rune) bool) Parser {
+func One(name string, pred func(rune) bool) Parser[string] {
 	return Match(name, func(s string) int {
 		if !utf8.FullRuneInString(s) {
 			return -1
@@ -242,7 +237,7 @@ func One(name string, pred func(rune) bool) Parser {
 
 // While returns a parser that parses a non-empty sequence of runes for which
 // pred is true. The name is used for error messages.
-func While(name string, pred func(rune) bool) Parser {
+func While(name string, pred func(rune) bool) Parser[string] {
 	return Match(name, func(s string) int {
 		for i, r := range s {
 			if !pred(r) {
@@ -258,7 +253,7 @@ func While(name string, pred func(rune) bool) Parser {
 
 // Regexp returns a parser that matches input using the given regular expression.
 // The name is used for error messages.
-func Regexp(name, sre string) Parser {
+func Regexp(name, sre string) Parser[string] {
 	re := regexp.MustCompile("^" + sre)
 	return Match(name, func(s string) int {
 		loc := re.FindStringIndex(s)
@@ -272,12 +267,12 @@ func Regexp(name, sre string) Parser {
 // Match returns a parser that calls calls f on its input.
 // f should return the length of the matching string, or -1
 // if there is no match. The name is used for error messages.
-func Match(name string, f func(string) int) Parser {
-	return func(s *State) (Value, error) {
+func Match(name string, f func(string) int) Parser[string] {
+	return func(s *State) (string, error) {
 		s.skip()
 		matchLen := f(s.input[s.pos:])
 		if matchLen < 0 {
-			return nil, fmt.Errorf("expected %s at %s", name, s.position())
+			return "", fmt.Errorf("expected %s at %s", name, s.position())
 		}
 		start := s.pos
 		s.pos += matchLen
@@ -285,22 +280,69 @@ func Match(name string, f func(string) int) Parser {
 	}
 }
 
-// And returns a parser that invokes its argument parsers in succession,
+// And returns a parser that
+// TODO XXXXXXXXXXXXXXXX
+// invokes its argument parsers in succession,
 // and fails as soon as one of the parsers fails.
-// The parser returns a slice of the argument parsers' non-nil values.
-func And(parsers ...Parser) Parser {
-	return func(s *State) (Value, error) {
-		var vals []Value
+// The parser returns a slice of the argument parsers' XXXXXXXXXXXXXXXX non-nil XXXX values.
+func And[T any](parsers ...Parser[T]) Parser[[]T] {
+	return func(s *State) (z []T, _ error) {
+		var ts []T
 		for _, p := range parsers {
 			val, err := p(s)
 			if err != nil {
-				return nil, err
+				return z, err
 			}
-			if val != nil {
-				vals = append(vals, val)
-			}
+			ts = append(ts, val)
 		}
-		return vals, nil
+		return ts, nil
+	}
+}
+
+// type Pair[T, U any] struct {
+// 	First  T
+// 	Second U
+// }
+
+func And2[T1, T2, R any](p1 Parser[T1], p2 Parser[T2], do func(T1, T2) R) Parser[R] {
+	return func(s *State) (z R, _ error) {
+		return doAnd2(s, p1, p2, func(s *State, t1 T1, t2 T2) (R, error) {
+			return do(t1, t2), nil
+		})
+	}
+}
+
+func doAnd2[T1, T2, R any](s *State, p1 Parser[T1], p2 Parser[T2], do func(*State, T1, T2) (R, error)) (z R, err error) {
+	t1, err := p1(s)
+	if err != nil {
+		return z, err
+	}
+	t2, err := p2(s)
+	if err != nil {
+		return z, err
+	}
+	return do(s, t1, t2)
+}
+
+func And3[T1, T2, T3, R any](p1 Parser[T1], p2 Parser[T2], p3 Parser[T3], do func(T1, T2, T3) R) Parser[R] {
+	return func(s *State) (z R, _ error) {
+		return doAnd2(s, p1, p2, func(s *State, t1 T1, t2 T2) (z R, err error) {
+			t3, err := p3(s)
+			if err != nil {
+				return z, err
+			}
+			return do(t1, t2, t3), nil
+		})
+	}
+}
+
+func And4[T1, T2, T3, T4, R any](p1 Parser[T1], p2 Parser[T2], p3 Parser[T3], p4 Parser[T4], do func(T1, T2, T3, T4) R) Parser[R] {
+	return func(s *State) (z R, _ error) {
+		return doAnd2(s, p1, p2, func(s *State, t1 T1, t2 T2) (z R, err error) {
+			return doAnd2(s, p3, p4, func(s *State, t3 T3, t4 T4) (z R, err error) {
+				return do(t1, t2, t3, t4), nil
+			})
+		})
 	}
 }
 
@@ -308,8 +350,8 @@ func And(parsers ...Parser) Parser {
 // as soon as the first succeeds and failing if they all fail.
 // The Commit parser modifies that behavior: if an argument parser calls Commit,
 // then Or fails as soon as that parser fails instead of trying the next argument.
-func Or(parsers ...Parser) Parser {
-	return func(s *State) (Value, error) {
+func Or[T any](parsers ...Parser[T]) Parser[T] {
+	return func(s *State) (z T, _ error) {
 		start := s.pos
 		defer func(c bool) { s.committed = c }(s.committed)
 		s.committed = false
@@ -317,51 +359,62 @@ func Or(parsers ...Parser) Parser {
 		for _, p := range parsers {
 			val, err := p(s)
 			if err != nil && s.committed {
-				return nil, err
+				return z, err
 			}
 			if err == nil {
 				return val, nil
 			}
 			s.pos = start
 		}
-		return nil, fmt.Errorf("parse failed at %s", s.position())
+		return z, fmt.Errorf("parse failed at %s", s.position())
+	}
+}
+
+// Empty parses the empty input and returns the zero value.
+func Empty[T any]() Parser[T] {
+	return func(*State) (z T, _ error) { return z, nil }
+}
+
+// Cut causes Or to stop trying alternatives on an error.
+// See Or's documentation for more.
+func Cut[T any](p Parser[T]) Parser[T] {
+	return func(s *State) (z T, _ error) {
+		v, err := p(s)
+		if err != nil {
+			return z, err
+		}
+		s.committed = true
+		return v, nil
 	}
 }
 
 var (
-	// Empty parses the empty input and returns nil.
-	Empty Parser = func(*State) (Value, error) { return nil, nil }
-
-	// Cut causes Or to stop trying alternatives on an error.
-	// See Or's documentation for more.
-	Cut Parser = func(s *State) (Value, error) { s.committed = true; return nil, nil }
-
 	// Int parses signed decimal integers.
 	// It accepts only the ASCII digits 0 through 9.
 	// Its value is an int64.
-	Int = Regexp("integer", `[+-]?[0-9]+`).Do(func(v Value) (Value, error) {
-		return strconv.ParseInt(v.(string), 10, 64)
-	})
+	Int = DoErr(
+		Regexp("integer", `[+-]?[0-9]+`),
+		func(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) })
 
 	// Float parses and returns a float64, using standard decimal notation.
-	Float = Regexp("floating-point number",
-		`[+-]?(\d+(\.\d*)?([Ee][+-]?\d+)?|\d*\.\d+([Ee][+-]?\d+)?)`).Do(
-		func(v Value) (Value, error) {
-			return strconv.ParseFloat(v.(string), 64)
-		})
+	Float = DoErr(
+		Regexp("floating-point number", `[+-]?(\d+(\.\d*)?([Ee][+-]?\d+)?|\d*\.\d+([Ee][+-]?\d+)?)`),
+		func(s string) (float64, error) { return strconv.ParseFloat(s, 64) })
 )
 
 // Optional parses either what p parses, or nothing.
-// It is equivalent to Or(p, Empty).
-func Optional(p Parser) Parser {
+// In the latter case, the parse value is nil.
+func Optional[T any](p Parser[T]) Parser[*T] {
 	if _, err := p.Parse(""); err == nil {
 		panic("Optional called with a parser that accepts the empty string; you don't need Optional")
 	}
-	return Or(p, Empty)
+	return Or(
+		Do(p, func(v T) *T { return &v }),
+		Empty[*T]())
 }
 
 // Repeat calls p repeatedly until it fails.
-func Repeat(p Parser) Parser {
+func Repeat[T any](p Parser[T]) Parser[[]T] {
 	if _, err := p.Parse(""); err == nil {
 		panic("Repeat called with a parser that accepts the empty string; that will lead to a stack overflow")
 	}
@@ -371,152 +424,49 @@ func Repeat(p Parser) Parser {
 	// as we would like. Go is applicative-order, so the recursive call to Repeat happens
 	// immediately and we have infinite recursion. We must delay the recursion.
 	return Or(
-		And(p, func(s *State) (Value, error) { return Repeat(p)(s) }),
-		Empty).Do(func(v Value) (Value, error) {
-		// v is either nil (from Empty),
-		// or []Value{vp} where vp is the value of p, if the nested Repeat is Empty,
-		// or []Value{vp, vr} where vr is the value of the nested Repeat.
-		if v == nil {
-			return nil, nil
-		}
-		vs := v.([]Value)
-		if len(vs) == 1 {
-			return v, nil
-		}
-		return append([]Value{vs[0]}, vs[1].([]Value)...), nil
-	})
+		And2(
+			p,
+			func(s *State) ([]T, error) { return Repeat(p)(s) },
+			func(v1 T, v2 []T) []T {
+				return append([]T{v1}, v2...)
+			}),
+		Empty[[]T]())
 }
 
-// List returns a parser that parses a non-empty list of items separate by sep.
+// List returns a parser that parses a non-empty list of items separated by sep.
 // The parser returns a slice of the items' values, ignoring the seps' values.
-func List(item, sep Parser) Parser {
-	return And(item, Repeat(
-		And(sep.Do(func(Value) (Value, error) { return nil, nil }),
-			item))).
-		Do(func(v Value) (Value, error) {
-			return flatten(v.([]Value)), nil
+func List[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
+	return And2(
+		item,
+		Repeat(And2(sep, item, func(_ U, t T) T { return t })),
+		func(t T, ts []T) []T {
+			return append([]T{t}, ts...)
 		})
 }
 
-func flatten(vs []Value) []Value {
-	var r []Value
-	for _, v := range vs {
-		if s, ok := v.([]Value); ok {
-			r = append(r, flatten(s)...)
-		} else {
-			r = append(r, v)
-		}
-	}
-	return r
+// Do returns a parser that parses some tokens using p. If p succeeds, then f is
+// called with the value of p and its return value is the value of Do.
+func Do[T, U any](p Parser[T], f func(T) U) Parser[U] {
+	return DoErr(p, func(t T) (U, error) { return f(t), nil })
 }
 
-// Do first parses some tokens using p. If p succeeds, then it calls f, which
-// must be a function, with the parse state and the value of p. The function's
-// return value is the value of Do. If the function returns an error, the parse
-// fails immediately.
-//
-// Do panics if its argument does not have one
-// of these signatures:
-//
-//   func(Value) (Value, error)
-// This is the most general signature. The signatures below are described by how
-// they map into this one.
-//
-//   func(Value) Value
-// The returned error is nil.
-//
-//   func(Value)
-// The returned value is the argument value and the return error is nil.
-//
-//   func([]Value) (Value, error)
-//   func([]Value) Value
-//   func([]Value)
-// These panic if the argument is not a slice. Otherwise they behave like
-// their counterparts above.
-func (p Parser) Do(f interface{}) Parser {
-	g, err := convertDoFunc(f)
-	if err != nil {
-		panic(err)
-	}
-	return func(s *State) (Value, error) {
-		val, err := p(s)
+// DoErr is like Do, but the function may return an error, which terminates
+// the parse if it is non-nil.
+func DoErr[T, U any](p Parser[T], f func(T) (U, error)) Parser[U] {
+	return func(s *State) (z U, _ error) {
+		t, err := p(s)
 		if err != nil {
-			return nil, err
+			return z, err
 		}
-		return g(val)
-	}
-}
-
-var (
-	valueSliceType = reflect.TypeOf([]Value{})
-	valueType      = valueSliceType.Elem()
-	errorType      = reflect.TypeOf([]error{}).Elem()
-)
-
-func convertDoFunc(f interface{}) (func(Value) (Value, error), error) {
-	t := reflect.TypeOf(f)
-	if t.Kind() != reflect.Func {
-		return nil, errors.New("argument to Do is not a function")
-	}
-	if t.NumIn() != 1 {
-		return nil, errors.New("argument to Do must be a function with one argument")
-	}
-	sliceArg := t.In(0) == valueSliceType
-	if !sliceArg && t.In(0) != valueType {
-		return nil, errors.New("argument to Do must be a function whose argument is a Value or []Value")
-	}
-	if t.NumOut() >= 1 && t.Out(0) != valueType {
-		return nil, errors.New("argument to Do must be a function whose first return value is parco.Value")
-	}
-	if t.NumOut() == 2 && t.Out(1) != errorType {
-		return nil, errors.New("argument to Do must be a function whose second return value is error")
-	}
-	switch t.NumOut() {
-	case 0:
-		if sliceArg {
-			g := f.(func([]Value))
-			return func(v Value) (Value, error) {
-				g(v.([]Value))
-				return v, nil
-			}, nil
-		}
-		g := f.(func(Value))
-		return func(v Value) (Value, error) {
-			g(v)
-			return v, nil
-		}, nil
-
-	case 1:
-		if sliceArg {
-			g := f.(func([]Value) Value)
-			return func(v Value) (Value, error) {
-				return g(v.([]Value)), nil
-			}, nil
-		}
-		g := f.(func(Value) Value)
-		return func(v Value) (Value, error) {
-			return g(v), nil
-		}, nil
-
-	case 2:
-		if sliceArg {
-			g := f.(func([]Value) (Value, error))
-			return func(v Value) (Value, error) {
-				return g(v.([]Value))
-			}, nil
-		}
-		return f.(func(Value) (Value, error)), nil
-
-	default:
-		return nil, errors.New("argument to Do can have at most two return values")
+		return f(t)
 	}
 }
 
 // Ptr returns a parser that invokes *p.
 // It is useful for creating recursive parsers.
 // See the calculator example for a typical use.
-func Ptr(p *Parser) Parser {
-	return func(s *State) (Value, error) {
+func Ptr[T any](p *Parser[T]) Parser[T] {
+	return func(s *State) (T, error) {
 		return (*p)(s)
 	}
 }

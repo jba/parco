@@ -38,7 +38,8 @@ func Example() {
 	// [the big^3 dog]
 }
 
-func Example_calculator() {
+// A four-function calculator where the calculations happen during parsing.
+func Example_immediate_calculator() {
 	type pair struct {
 		op  string
 		num float64
@@ -116,4 +117,92 @@ func Example_calculator() {
 	// 1 + 2 * 3 = 7
 	// ( 1 + 2 ) * 3 = 9
 	// ((3) ) = 3
+}
+
+// A four-function calculator where the parser builds up a tree for
+// later evaluation.
+func Example_delayed_calculator() {
+	type node struct {
+		op          string
+		num         int64 // when op == ""
+		left, right *node
+	}
+
+	var (
+		expr, factor parco.Parser[*node]
+		Eq           = parco.Equal
+		Repeat       = parco.Repeat[*node]
+	)
+
+	factor = parco.Or(
+		parco.Do(parco.Int, func(i int64) *node { return &node{op: "", num: i} }),
+		parco.And2(Eq("-"), parco.Ptr(&factor),
+			func(_ string, n *node) *node { n.num = -n.num; return n }),
+		parco.And3(Eq("("), parco.Ptr(&expr), Eq(")"),
+			func(_ string, n *node, _ string) *node { return n }),
+	)
+
+	p := func(op1, op2 string, argp parco.Parser[*node]) parco.Parser[*node] {
+		return parco.And2(argp,
+			Repeat(parco.And2(parco.Or(Eq(op1), Eq(op2)), argp,
+				func(op string, n *node) *node {
+					return &node{op: op, right: n}
+				})),
+			func(left *node, ns []*node) *node {
+				if len(ns) == 0 {
+					return left
+				}
+				for _, n := range ns {
+					n.left = left
+					left = n
+				}
+				return ns[len(ns)-1]
+			})
+	}
+
+	term := p("*", "/", factor)
+	expr = p("+", "-", term)
+
+	var eval func(n *node) int64
+	eval = func(n *node) int64 {
+		if n.op == "" {
+			return n.num
+		}
+		l := eval(n.left)
+		r := eval(n.right)
+		switch n.op {
+		case "+":
+			return l + r
+		case "-":
+			return l - r
+		case "*":
+			return l * r
+		case "/":
+			return l / r
+		default:
+			panic("bad op")
+		}
+	}
+
+	for _, in := range []string{
+		"2", "- 3", "2 * 3", "2 * - 3", "2 * -3", "2 * 3 / 4", "1 + 2 * 3", "( 1 + 2 ) * 3", "((3) )",
+	} {
+		n, err := expr.Parse(in)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("%s = %d\n", in, eval(n))
+	}
+
+	// Output:
+	// 2 = 2
+	// - 3 = -3
+	// 2 * 3 = 6
+	// 2 * - 3 = -6
+	// 2 * -3 = -6
+	// 2 * 3 / 4 = 1
+	// 1 + 2 * 3 = 7
+	// ( 1 + 2 ) * 3 = 9
+	// ((3) ) = 3
+
 }

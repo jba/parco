@@ -388,34 +388,19 @@ func TestParseQuery(t *testing.T) {
 
 	ident := Regexp("id", `[_\pL][_\pL\p{Nd}]*`)
 
-	selectClause := And2(
-		Word("select"),
-		Or(
-			Do(Equal("*"), func(string) []string { return nil }),
-			List(ident, Equal(","))),
-		func(_ string, v []string) *query {
-			return &query{selects: v}
-		})
-
-	fromClause := Do(
-		And(Word("from"), ident),
-		func(v []string) string {
-			return v[1]
-		})
-
-	limitClause := And2(
-		Cut(Word("limit")), Int,
-		func(_ string, v int64) int64 { return v })
-
-	p := And2(
-		And2(selectClause, fromClause, func(q *query, s string) *query {
-			q.coll = s
-			return q
-		}),
-		Optional(limitClause),
-		func(q *query, pi *int64) *query {
-			if pi != nil {
-				q.limit = *pi
+	p := Then(Word("select"),
+		func(_ string, s *State) *query {
+			q := &query{}
+			q.selects = Or(
+				Do(Equal("*"), func(string) []string { return nil }),
+				List(ident, Equal(",")))(s)
+			Word("from")(s)
+			q.coll = ident(s)
+			pl := Optional(
+				And2(Cut(Word("limit")), Int,
+					func(_ string, v int64) int64 { return v }))(s)
+			if pl != nil {
+				q.limit = *pl
 			}
 			return q
 		})

@@ -396,12 +396,6 @@ func Optional[T any](p Parser[T]) Parser[*T] {
 		Empty[*T]())
 }
 
-// func xxx() {
-// 	term := Then(Float, func(s *State, f1 float64) (float64, error) {
-// 		return Optional(And2(Eq("*"), Float, func(op string, f2 float64) float64 {
-// 			return f1 * f2
-// 		}))(s)
-
 // Do returns a parser that parses some tokens using p. If p succeeds, then f is
 // called with the value of p and its return value is the value of Do.
 func Do[T, U any](p Parser[T], f func(T) U) Parser[U] {
@@ -423,33 +417,45 @@ func Repeat[T any](p Parser[T]) Parser[[]T] {
 	if _, err := p.Parse(""); err == nil {
 		panic("Repeat called with a parser that accepts the empty string; that will lead to a stack overflow")
 	}
+	return Do(repeat(p), reverse[T])
+}
 
+func reverse[T any](ts []T) []T {
+	for i := len(ts)/2 - 1; i >= 0; i-- {
+		j := len(ts) - i - 1
+		ts[i], ts[j] = ts[j], ts[i]
+	}
+	return ts
+}
+
+// repeat produces a list of values parsed by p in reverse order.
+func repeat[T any](p Parser[T]) Parser[[]T] {
 	// We can't write
-	//  Or(And(p, Repeat(p)), Empty)
+	//  Or(And(p, repeat(p)), Empty)
 	// as we would like. Go is applicative-order, so the recursive call to Repeat happens
-	// immediately and we have infinite recursion. We must delay the recursion.
-	// TODO: this causes the check at the top of Repeat to happen on each recursive call,
-	// which is needlessly expensive.
-	return Or(
-		And2(
-			p,
-			func(s *State) []T { return Repeat(p)(s) },
-			func(v1 T, v2 []T) []T {
-				return append([]T{v1}, v2...)
-			}),
-		Empty[[]T]())
+	// immediately and we have infinite recursion. We must delay the recursion using Ptr.
+	var r Parser[[]T]
+	r = Or(
+		And2(p, Ptr(&r), func(t T, ts []T) []T { return append(ts, t) }),
+		Empty[[]T](),
+	)
+	return r
 }
 
 // List returns a parser that parses a non-empty list of items separated by sep.
 // The parser returns a slice of the items' values, ignoring the seps' values.
 func List[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
-	return And2(
-		item,
-		Repeat(And2(sep, item, func(_ U, t T) T { return t })),
-		func(t T, ts []T) []T {
-			return append([]T{t}, ts...)
-		})
+	return Do(
+		And2(
+			item,
+			repeat(And2(sep, item, func(_ U, t T) T { return t })),
+			func(t T, ts []T) []T {
+				return append(ts, t)
+			}),
+		reverse[T])
 }
+
+//func List[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
 
 // Ptr returns a parser that invokes *p.
 // It is useful for creating recursive parsers.

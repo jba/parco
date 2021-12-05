@@ -40,62 +40,58 @@ func Example() {
 
 // A four-function calculator where the calculations happen during parsing.
 func Example_immediate_calculator() {
-	type pair struct {
-		op  string
-		num float64
-	}
+	// type pair struct {
+	// 	op  string
+	// 	num float64
+	// }
 
 	var (
-		expr, factor parco.Parser[pair]
+		expr, factor parco.Parser[float64]
 		Eq           = parco.Equal
-		Repeat       = parco.Repeat[pair]
+		Repeat       = parco.Repeat[float64]
 	)
 
 	factor = parco.Or(
-		parco.Do(parco.Float, func(f float64) pair { return pair{"", f} }),
+		parco.Float,
 		parco.And2(Eq("-"), parco.Ptr(&factor),
-			func(_ string, p pair) pair { return pair{"", -p.num} }),
+			func(_ string, f float64) float64 { return -f }),
 		parco.And3(Eq("("), parco.Ptr(&expr), Eq(")"),
-			func(_ string, p pair, _ string) pair { return pair{"", p.num} }),
+			func(_ string, f float64, _ string) float64 { return f }),
 	)
+
+	eval := func(x float64, op string, y float64) float64 {
+		switch op {
+		case "+":
+			return x + y
+		case "-":
+			return x - y
+		case "*":
+			return x * y
+		case "/":
+			return x / y
+		default:
+			panic("bad op")
+		}
+	}
+
 	// term ::= factor | term (* | /) factor
 	// but we can't write it that way because the Or would succeed and
 	// return after the first factor.
-	term := parco.And2(factor,
-		Repeat(parco.And2(parco.Or(Eq("*"), Eq("/")), factor,
-			func(op string, p pair) pair {
-				return pair{op, p.num}
-			})),
-		func(p pair, ps []pair) pair {
-			f := p.num
-			for _, p := range ps {
-				switch p.op {
-				case "*":
-					f *= p.num
-				case "/":
-					f /= p.num
-				}
-			}
-			return pair{"", f}
-		})
 
-	expr = parco.And2(term,
-		Repeat(parco.And2(parco.Or(Eq("+"), Eq("-")), term,
-			func(op string, p pair) pair {
-				return pair{op, p.num}
-			})),
-		func(p pair, ps []pair) pair {
-			f := p.num
-			for _, p := range ps {
-				switch p.op {
-				case "+":
-					f += p.num
-				case "-":
-					f -= p.num
-				}
-			}
-			return pair{"", f}
-		})
+	seq := func(op1, op2 string, argp parco.Parser[float64]) parco.Parser[float64] {
+		return parco.Then(argp,
+			func(result float64, s *parco.State) float64 {
+				Repeat(parco.And2(parco.Or(Eq(op1), Eq(op2)), argp,
+					func(op string, f float64) float64 {
+						result = eval(result, op, f)
+						return -999 // unused
+					}))(s)
+				return result
+			})
+	}
+
+	term := seq("*", "/", factor)
+	expr = seq("+", "-", term)
 
 	for _, in := range []string{
 		"2", "- 3", "2 * 3", "2 * - 3", "2 * -3", "2 * 3 / 4", "1 + 2 * 3", "( 1 + 2 ) * 3", "((3) )",
@@ -104,7 +100,7 @@ func Example_immediate_calculator() {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Printf("%s = %g\n", in, val.num)
+		fmt.Printf("%s = %g\n", in, val)
 	}
 
 	// Output:
@@ -143,20 +139,14 @@ func Example_delayed_calculator() {
 	)
 
 	p := func(op1, op2 string, argp parco.Parser[*node]) parco.Parser[*node] {
-		return parco.And2(argp,
-			Repeat(parco.And2(parco.Or(Eq(op1), Eq(op2)), argp,
-				func(op string, n *node) *node {
-					return &node{op: op, right: n}
-				})),
-			func(left *node, ns []*node) *node {
-				if len(ns) == 0 {
-					return left
-				}
-				for _, n := range ns {
-					n.left = left
-					left = n
-				}
-				return ns[len(ns)-1]
+		return parco.Then(argp,
+			func(n *node, s *parco.State) *node {
+				Repeat(parco.And2(parco.Or(Eq(op1), Eq(op2)), argp,
+					func(op string, right *node) *node {
+						n = &node{left: n, op: op, right: right}
+						return nil
+					}))(s)
+				return n
 			})
 	}
 

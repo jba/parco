@@ -141,7 +141,7 @@ func (s *State) position() string {
 
 // A Parser is a function that takes a state, tries to consume so input, and
 // returns some value.
-type Parser[T any] func(*State) (T, error)
+type Parser[T any] func(*State) T
 
 // Parse uses the given Parser to parse the tokens. The value argument is put
 // the Value field of the State that is passed to user-defined functions.
@@ -149,7 +149,7 @@ type Parser[T any] func(*State) (T, error)
 // that behavior.
 func (p Parser[T]) Parse(input string) (z T, _ error) {
 	s := newState(input)
-	val, err := p(s)
+	val, err := Catch(p, s)
 	if err != nil {
 		return z, err
 	}
@@ -164,7 +164,7 @@ func (p Parser[T]) Parse(input string) (z T, _ error) {
 // parser (Equal, EqualUnlessFollowedBy, Match, One, Regexp, Word and While).
 // If f is nil, no input is skipped.
 func Skipping[T any](pred func(rune) bool, p Parser[T]) Parser[T] {
-	return func(s *State) (T, error) {
+	return func(s *State) T {
 		defer func(f func(rune) bool) {
 			s.skipPred = f
 		}(s.skipPred)
@@ -268,15 +268,15 @@ func Regexp(name, sre string) Parser[string] {
 // f should return the length of the matching string, or -1
 // if there is no match. The name is used for error messages.
 func Match(name string, f func(string) int) Parser[string] {
-	return func(s *State) (string, error) {
+	return func(s *State) string {
 		s.skip()
 		matchLen := f(s.input[s.pos:])
 		if matchLen < 0 {
-			return "", fmt.Errorf("expected %s at %s", name, s.position())
+			Failf("expected %s at %s", name, s.position())
 		}
 		start := s.pos
 		s.pos += matchLen
-		return s.input[start:s.pos], nil
+		return s.input[start:s.pos]
 	}
 }
 
@@ -286,63 +286,36 @@ func Match(name string, f func(string) int) Parser[string] {
 // and fails as soon as one of the parsers fails.
 // The parser returns a slice of the argument parsers' XXXXXXXXXXXXXXXX non-nil XXXX values.
 func And[T any](parsers ...Parser[T]) Parser[[]T] {
-	return func(s *State) (z []T, _ error) {
+	return func(s *State) []T {
 		var ts []T
 		for _, p := range parsers {
-			val, err := p(s)
-			if err != nil {
-				return z, err
-			}
-			ts = append(ts, val)
+			ts = append(ts, p(s))
 		}
-		return ts, nil
+		return ts
 	}
 }
-
-// type Pair[T, U any] struct {
-// 	First  T
-// 	Second U
-// }
 
 func And2[T1, T2, R any](p1 Parser[T1], p2 Parser[T2], do func(T1, T2) R) Parser[R] {
-	return func(s *State) (z R, _ error) {
-		return doAnd2(s, p1, p2, func(s *State, t1 T1, t2 T2) (R, error) {
-			return do(t1, t2), nil
-		})
+	return func(s *State) R {
+		return do(p1(s), p2(s))
 	}
-}
-
-func doAnd2[T1, T2, R any](s *State, p1 Parser[T1], p2 Parser[T2], do func(*State, T1, T2) (R, error)) (z R, err error) {
-	t1, err := p1(s)
-	if err != nil {
-		return z, err
-	}
-	t2, err := p2(s)
-	if err != nil {
-		return z, err
-	}
-	return do(s, t1, t2)
 }
 
 func And3[T1, T2, T3, R any](p1 Parser[T1], p2 Parser[T2], p3 Parser[T3], do func(T1, T2, T3) R) Parser[R] {
-	return func(s *State) (z R, _ error) {
-		return doAnd2(s, p1, p2, func(s *State, t1 T1, t2 T2) (z R, err error) {
-			t3, err := p3(s)
-			if err != nil {
-				return z, err
-			}
-			return do(t1, t2, t3), nil
-		})
+	return func(s *State) R {
+		return do(p1(s), p2(s), p3(s))
 	}
 }
 
 func And4[T1, T2, T3, T4, R any](p1 Parser[T1], p2 Parser[T2], p3 Parser[T3], p4 Parser[T4], do func(T1, T2, T3, T4) R) Parser[R] {
-	return func(s *State) (z R, _ error) {
-		return doAnd2(s, p1, p2, func(s *State, t1 T1, t2 T2) (z R, err error) {
-			return doAnd2(s, p3, p4, func(s *State, t3 T3, t4 T4) (z R, err error) {
-				return do(t1, t2, t3, t4), nil
-			})
-		})
+	return func(s *State) R {
+		return do(p1(s), p2(s), p3(s), p4(s))
+	}
+}
+
+func And5[T1, T2, T3, T4, T5, R any](p1 Parser[T1], p2 Parser[T2], p3 Parser[T3], p4 Parser[T4], p5 Parser[T5], do func(T1, T2, T3, T4, T5) R) Parser[R] {
+	return func(s *State) R {
+		return do(p1(s), p2(s), p3(s), p4(s), p5(s))
 	}
 }
 
@@ -351,40 +324,38 @@ func And4[T1, T2, T3, T4, R any](p1 Parser[T1], p2 Parser[T2], p3 Parser[T3], p4
 // The Commit parser modifies that behavior: if an argument parser calls Commit,
 // then Or fails as soon as that parser fails instead of trying the next argument.
 func Or[T any](parsers ...Parser[T]) Parser[T] {
-	return func(s *State) (z T, _ error) {
+	return func(s *State) T {
 		start := s.pos
 		defer func(c bool) { s.committed = c }(s.committed)
 		s.committed = false
 
 		for _, p := range parsers {
-			val, err := p(s)
+			val, err := Catch(p, s)
 			if err != nil && s.committed {
-				return z, err
+				Fail(err)
 			}
 			if err == nil {
-				return val, nil
+				return val
 			}
 			s.pos = start
 		}
-		return z, fmt.Errorf("parse failed at %s", s.position())
+		Failf("parse failed at %s", s.position())
+		panic("unreachable")
 	}
 }
 
 // Empty parses the empty input and returns the zero value.
 func Empty[T any]() Parser[T] {
-	return func(*State) (z T, _ error) { return z, nil }
+	return func(*State) (z T) { return z }
 }
 
 // Cut causes Or to stop trying alternatives on an error.
 // See Or's documentation for more.
 func Cut[T any](p Parser[T]) Parser[T] {
-	return func(s *State) (z T, _ error) {
-		v, err := p(s)
-		if err != nil {
-			return z, err
-		}
+	return func(s *State) T {
+		v := p(s)
 		s.committed = true
-		return v, nil
+		return v
 	}
 }
 
@@ -392,14 +363,26 @@ var (
 	// Int parses signed decimal integers.
 	// It accepts only the ASCII digits 0 through 9.
 	// Its value is an int64.
-	Int = DoErr(
+	Int = Do(
 		Regexp("integer", `[+-]?[0-9]+`),
-		func(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) })
+		func(s string) int64 {
+			i, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				Fail(err)
+			}
+			return i
+		})
 
 	// Float parses and returns a float64, using standard decimal notation.
-	Float = DoErr(
+	Float = Do(
 		Regexp("floating-point number", `[+-]?(\d+(\.\d*)?([Ee][+-]?\d+)?|\d*\.\d+([Ee][+-]?\d+)?)`),
-		func(s string) (float64, error) { return strconv.ParseFloat(s, 64) })
+		func(s string) float64 {
+			f, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				Fail(err)
+			}
+			return f
+		})
 )
 
 // Optional parses either what p parses, or nothing.
@@ -411,6 +394,28 @@ func Optional[T any](p Parser[T]) Parser[*T] {
 	return Or(
 		Do(p, func(v T) *T { return &v }),
 		Empty[*T]())
+}
+
+// func xxx() {
+// 	term := Then(Float, func(s *State, f1 float64) (float64, error) {
+// 		return Optional(And2(Eq("*"), Float, func(op string, f2 float64) float64 {
+// 			return f1 * f2
+// 		}))(s)
+
+// Do returns a parser that parses some tokens using p. If p succeeds, then f is
+// called with the value of p and its return value is the value of Do.
+func Do[T, U any](p Parser[T], f func(T) U) Parser[U] {
+	return func(s *State) U {
+		return f(p(s))
+	}
+}
+
+// Then is like Do, but it passes the parse state to the function, allowing
+// it to call a parser knowing the value of the previous parser.
+func Then[T, U any](p Parser[T], f func(t T, s *State) U) Parser[U] {
+	return func(s *State) U {
+		return f(p(s), s)
+	}
 }
 
 // Repeat calls p repeatedly until it fails.
@@ -428,7 +433,7 @@ func Repeat[T any](p Parser[T]) Parser[[]T] {
 	return Or(
 		And2(
 			p,
-			func(s *State) ([]T, error) { return Repeat(p)(s) },
+			func(s *State) []T { return Repeat(p)(s) },
 			func(v1 T, v2 []T) []T {
 				return append([]T{v1}, v2...)
 			}),
@@ -446,55 +451,38 @@ func List[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
 		})
 }
 
-func Then[T, U any](p1 Parser[T], f func(s *State, t T) (U, error)) Parser[U] {
-	return func(s *State) (z U, err error) {
-		t, err := p1(s)
-		if err != nil {
-			return z, err
-		}
-		return f(s, t)
-	}
-}
-
-// func xxx() {
-// 	term := Then(Float, func(s *State, f1 float64) (float64, error) {
-// 		return Optional(And2(Eq("*"), Float, func(op string, f2 float64) float64 {
-// 			return f1 * f2
-// 		}))(s)
-
-// func List2[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
-// 	return XXX(
-// 		item,
-// 		func(Y) Z {
-
-// And2(
-// 		item,
-// 		Do(Or(
-// 			And2(sep, item
-
-// Do returns a parser that parses some tokens using p. If p succeeds, then f is
-// called with the value of p and its return value is the value of Do.
-func Do[T, U any](p Parser[T], f func(T) U) Parser[U] {
-	return DoErr(p, func(t T) (U, error) { return f(t), nil })
-}
-
-// DoErr is like Do, but the function may return an error, which terminates
-// the parse if it is non-nil.
-func DoErr[T, U any](p Parser[T], f func(T) (U, error)) Parser[U] {
-	return func(s *State) (z U, _ error) {
-		t, err := p(s)
-		if err != nil {
-			return z, err
-		}
-		return f(t)
-	}
-}
-
 // Ptr returns a parser that invokes *p.
 // It is useful for creating recursive parsers.
 // See the calculator example for a typical use.
 func Ptr[T any](p *Parser[T]) Parser[T] {
-	return func(s *State) (T, error) {
+	return func(s *State) T {
 		return (*p)(s)
 	}
+}
+
+type fail struct {
+	err error
+}
+
+func Catch[T any](p Parser[T], s *State) (r T, err error) {
+	defer func() {
+		if x := recover(); x != nil {
+			if f, ok := x.(fail); ok {
+				var z T
+				r = z
+				err = f.err
+				return
+			}
+			panic(x)
+		}
+	}()
+	return p(s), nil
+}
+
+func Fail(err error) {
+	panic(fail{err})
+}
+
+func Failf(format string, args ...interface{}) {
+	Fail(fmt.Errorf(format, args...))
 }

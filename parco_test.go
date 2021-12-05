@@ -3,6 +3,7 @@
 package parco
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -24,7 +25,7 @@ func TestWord(t *testing.T) {
 		{"foo bar", "foo", ""},
 		{"foo+bar", "foo", ""},
 	} {
-		got, gotErr := p(newState(test.in))
+		got, gotErr := Catch(p, newState(test.in))
 		if got != test.want {
 			t.Errorf("%q: got (%v, %v), want %v", test.in, got, gotErr, test.want)
 			continue
@@ -177,6 +178,15 @@ func TestParse(t *testing.T) {
 			p:       Or(Word("a"), Word("b")),
 			in:      "c",
 			wantErr: `parse failed at index 0 ("c")`,
+		},
+		{
+			name: "Then",
+			p: Then(Int, func(i1 int64, s *State) string {
+				i2 := Int(s)
+				return strconv.FormatInt(i1+i2, 10)
+			}),
+			in:   "3 5",
+			want: "8",
 		},
 	} {
 		test.run(t)

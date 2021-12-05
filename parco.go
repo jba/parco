@@ -423,6 +423,8 @@ func Repeat[T any](p Parser[T]) Parser[[]T] {
 	//  Or(And(p, Repeat(p)), Empty)
 	// as we would like. Go is applicative-order, so the recursive call to Repeat happens
 	// immediately and we have infinite recursion. We must delay the recursion.
+	// TODO: this causes the check at the top of Repeat to happen on each recursive call,
+	// which is needlessly expensive.
 	return Or(
 		And2(
 			p,
@@ -443,6 +445,32 @@ func List[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
 			return append([]T{t}, ts...)
 		})
 }
+
+func Then[T, U any](p1 Parser[T], f func(s *State, t T) (U, error)) Parser[U] {
+	return func(s *State) (z U, err error) {
+		t, err := p1(s)
+		if err != nil {
+			return z, err
+		}
+		return f(s, t)
+	}
+}
+
+// func xxx() {
+// 	term := Then(Float, func(s *State, f1 float64) (float64, error) {
+// 		return Optional(And2(Eq("*"), Float, func(op string, f2 float64) float64 {
+// 			return f1 * f2
+// 		}))(s)
+
+// func List2[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
+// 	return XXX(
+// 		item,
+// 		func(Y) Z {
+
+// And2(
+// 		item,
+// 		Do(Or(
+// 			And2(sep, item
 
 // Do returns a parser that parses some tokens using p. If p succeeds, then f is
 // called with the value of p and its return value is the value of Do.

@@ -48,7 +48,6 @@ func Example_immediate_calculator() {
 	var (
 		expr, factor parco.Parser[float64]
 		Eq           = parco.Equal
-		Repeat       = parco.Repeat[float64]
 	)
 
 	factor = parco.Or(
@@ -78,15 +77,19 @@ func Example_immediate_calculator() {
 	// but we can't write it that way because the Or would succeed and
 	// return after the first factor.
 
+	type pair struct {
+		op  string
+		arg float64
+	}
+
 	seq := func(op1, op2 string, argp parco.Parser[float64]) parco.Parser[float64] {
-		return parco.Then(argp,
-			func(result float64, s *parco.State) float64 {
-				Repeat(parco.And2(parco.Or(Eq(op1), Eq(op2)), argp,
-					func(op string, f float64) float64 {
-						result = eval(result, op, f)
-						return -999 // unused
-					}))(s)
-				return result
+		return parco.LeftFold(
+			argp,
+			parco.And2(parco.Or(Eq(op1), Eq(op2)), argp, func(op string, arg float64) pair {
+				return pair{op, arg}
+			}),
+			func(left float64, p pair) float64 {
+				return eval(left, p.op, p.arg)
 			})
 	}
 
@@ -127,7 +130,6 @@ func Example_delayed_calculator() {
 	var (
 		expr, factor parco.Parser[*node]
 		Eq           = parco.Equal
-		Repeat       = parco.Repeat[*node]
 	)
 
 	factor = parco.Or(
@@ -139,14 +141,15 @@ func Example_delayed_calculator() {
 	)
 
 	p := func(op1, op2 string, argp parco.Parser[*node]) parco.Parser[*node] {
-		return parco.Then(argp,
-			func(n *node, s *parco.State) *node {
-				Repeat(parco.And2(parco.Or(Eq(op1), Eq(op2)), argp,
-					func(op string, right *node) *node {
-						n = &node{left: n, op: op, right: right}
-						return nil
-					}))(s)
-				return n
+		return parco.LeftFold(
+			argp,
+			parco.And2(parco.Or(Eq(op1), Eq(op2)), argp,
+				func(op string, right *node) *node {
+					return &node{op: op, right: right}
+				}),
+			func(n1, n2 *node) *node {
+				n2.left = n1
+				return n2
 			})
 	}
 

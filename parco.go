@@ -413,7 +413,7 @@ func Then[T, U any](p Parser[T], f func(t T, s *State) U) Parser[U] {
 }
 
 // Repeat calls p repeatedly until it fails.
-func Repeat[T any](p Parser[T]) Parser[[]T] {
+func RepeatRecursive[T any](p Parser[T]) Parser[[]T] {
 	if _, err := p.Parse(""); err == nil {
 		panic("Repeat called with a parser that accepts the empty string; that will lead to a stack overflow")
 	}
@@ -444,7 +444,7 @@ func repeat[T any](p Parser[T]) Parser[[]T] {
 
 // List returns a parser that parses a non-empty list of items separated by sep.
 // The parser returns a slice of the items' values, ignoring the seps' values.
-func List[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
+func ListRecursive[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
 	return Do(
 		And2(
 			item,
@@ -455,7 +455,36 @@ func List[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
 		reverse[T])
 }
 
-//func List[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
+func LeftFold[T, U any](init Parser[T], rep Parser[U], fold func(t T, u U) T) Parser[T] {
+	opt := Optional(rep)
+	return Then(init, func(t T, s *State) T {
+		for {
+			pu := opt(s)
+			if pu == nil {
+				return t
+			}
+			t = fold(t, *pu)
+		}
+	})
+}
+
+func append1[T any](ts []T, t T) []T {
+	return append(ts, t)
+}
+func Repeat[T any](p Parser[T]) Parser[[]T] {
+	return Or(LeftFold(
+		Do(p, func(t T) []T { return []T{t} }),
+		p,
+		append1[T]),
+		Empty[[]T]())
+}
+
+func List[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {
+	return LeftFold(
+		Do(item, func(t T) []T { return []T{t} }),
+		And2(sep, item, func(_ U, t T) T { return t }),
+		append1[T])
+}
 
 // Ptr returns a parser that invokes *p.
 // It is useful for creating recursive parsers.

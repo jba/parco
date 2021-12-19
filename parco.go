@@ -221,7 +221,7 @@ func isWordChar(r rune) bool {
 }
 
 // One matches a single rune for which pred returns true. The name
-// is used for error messages.
+// is only used for error messages.
 func One(name string, pred func(rune) bool) Parser[string] {
 	return Match(name, func(s string) int {
 		if !utf8.FullRuneInString(s) {
@@ -236,7 +236,7 @@ func One(name string, pred func(rune) bool) Parser[string] {
 }
 
 // While returns a parser that parses a non-empty sequence of runes for which
-// pred is true. The name is used for error messages.
+// pred is true. The name is only used for error messages.
 func While(name string, pred func(rune) bool) Parser[string] {
 	return Match(name, func(s string) int {
 		for i, r := range s {
@@ -264,9 +264,11 @@ func Regexp(name, sre string) Parser[string] {
 	})
 }
 
-// Match returns a parser that calls calls f on its input.
-// f should return the length of the matching string, or -1
-// if there is no match. The name is used for error messages.
+// Match returns a parser that calls calls f on its input. f should return the
+// length of the matching string, or a negative number if there is no match.
+// If f returns a non-negative integer, Match consumes that many bytes
+// of input and succeeds. Otherwise, it fails.
+// The name is only used for error messages.
 func Match(name string, f func(string) int) Parser[string] {
 	return func(s *State) string {
 		s.skip()
@@ -386,7 +388,8 @@ var (
 )
 
 // Optional parses either what p parses, or nothing.
-// In the latter case, the parse value is nil.
+// If p succeeds, a pointer to p's result it returned.
+// Otherwise, the parse value is nil.
 func Optional[T any](p Parser[T]) Parser[*T] {
 	if _, err := p.Parse(""); err == nil {
 		panic("Optional called with a parser that accepts the empty string; you don't need Optional")
@@ -466,6 +469,20 @@ func LeftFold[T, U any](init Parser[T], rep Parser[U], fold func(t T, u U) T) Pa
 			t = fold(t, *pu)
 		}
 	})
+}
+
+func LeftFold2[T, U any](init T, rep Parser[U], fold func(t T, u U) T) Parser[T] {
+	opt := Optional(rep)
+	t := init
+	return func(s *State) T {
+		for {
+			pu := opt(s)
+			if pu == nil {
+				return t
+			}
+			t = fold(t, *pu)
+		}
+	}
 }
 
 func append1[T any](ts []T, t T) []T {

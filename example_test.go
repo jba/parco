@@ -8,6 +8,7 @@ import (
 	"github.com/jba/parco"
 )
 
+// A parser for the grammar "the (small | big*) dog".
 func Example() {
 	p := parco.And(
 		parco.Word("the"),
@@ -40,11 +41,6 @@ func Example() {
 
 // A four-function calculator where the calculations happen during parsing.
 func Example_immediate_calculator() {
-	// type pair struct {
-	// 	op  string
-	// 	num float64
-	// }
-
 	var (
 		expr, factor parco.Parser[float64]
 		Eq           = parco.Equal

@@ -257,6 +257,19 @@ func TestParse(t *testing.T) {
 			want: []string{"x", "x"},
 		},
 		{
+			name: "Repeat1",
+			p:    Repeat1(Word("x")),
+			in:   "x",
+			want: []string{"x"},
+		},
+		{
+			name: "Repeat1 3",
+			p:    Repeat1(Word("x")),
+			in:   "x x   x",
+			want: []string{"x", "x", "x"},
+		},
+
+		{
 			name: "List",
 			p:    List(Regexp("id", `[a-z]+`), Equal(",")),
 			in:   "a, b ,c , d",

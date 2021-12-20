@@ -255,8 +255,8 @@ func While(name string, pred func(rune) bool) Parser[string] {
 // The name is used for error messages.
 func Regexp(name, sre string) Parser[string] {
 	re := regexp.MustCompile("^" + sre)
-	return Match(name, func(s string) int {
-		loc := re.FindStringIndex(s)
+	return Match(name, func(input string) int {
+		loc := re.FindStringIndex(input)
 		if loc == nil {
 			return -1
 		}
@@ -279,6 +279,15 @@ func Match(name string, f func(string) int) Parser[string] {
 		start := s.pos
 		s.pos += matchLen
 		return s.input[start:s.pos]
+	}
+}
+
+func Trace[T any](name string, p Parser[T]) Parser[T] {
+	return func(s *State) T {
+		fmt.Printf("> %s on %q\n", name, s.input[s.pos:])
+		t := p(s)
+		fmt.Printf("< %s: %v\n", name, t)
+		return t
 	}
 }
 
@@ -488,12 +497,16 @@ func LeftFold2[T, U any](init T, rep Parser[U], fold func(t T, u U) T) Parser[T]
 func append1[T any](ts []T, t T) []T {
 	return append(ts, t)
 }
-func Repeat[T any](p Parser[T]) Parser[[]T] {
-	return Or(LeftFold(
+
+func Repeat1[T any](p Parser[T]) Parser[[]T] {
+	return LeftFold(
 		Do(p, func(t T) []T { return []T{t} }),
 		p,
-		append1[T]),
-		Empty[[]T]())
+		append1[T])
+}
+
+func Repeat[T any](p Parser[T]) Parser[[]T] {
+	return Or(Repeat1(p), Empty[[]T]())
 }
 
 func List[T, U any](item Parser[T], sep Parser[U]) Parser[[]T] {

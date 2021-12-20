@@ -49,31 +49,32 @@ func (*repeat) isExpression()   {}
 func (choice) isExpression()    {}
 func (sequence) isExpression()  {}
 
-func secondOf2[A, B any](_ A, b B) B { return b }
-
 func usageParser() parco.Parser[expression] {
 	Eq := parco.Equal
 
 	var choose parco.Parser[expression]
 
-	name := parco.Regexp("name", `\pL[-._\pL\pN]*`) // disallow . to allow word...
+	ident := `\pL[-._\pL\pN]*`
+	name := parco.Regexp("name", ident)
 
 	literal := parco.Do(name,
 		func(s string) expression { return &lit{s} })
 
-	named := parco.And2(
-		Eq("<"),
-		parco.Skipping(nil, parco.And2(name, Eq(">"), func(n, _ string) string { return n })),
-		func(_, n string) expression {
-			return &value{n}
-		})
+	named := parco.Do(
+		parco.Regexp("named", "<"+ident+">"),
+		func(s string) expression { return &value{s[1 : len(s)-1]} })
 
 	// A flag is a comma-separated list of flag names optionally followed by '=' name.
-	flagName := parco.And2(Eq("-"), parco.Skipping(nil, name), secondOf2[string, string])
+	flagName := parco.Do(
+		parco.Regexp("flag name", "-"+ident),
+		func(s string) string { return s[1:] })
 
 	flag := parco.And2(
 		parco.List(flagName, Eq(",")),
-		parco.Optional(parco.And2(Eq("="), name, secondOf2[string, string])),
+		parco.Optional(
+			parco.And2(Eq("="), name,
+				func(_, n string) string { return n }),
+		),
 		func(aliases []string, param *string) expression {
 			return &flags{aliases: aliases, param: param}
 		})
@@ -150,7 +151,7 @@ func TestUsageLang(t *testing.T) {
 			&repeat{&value{"file"}},
 		},
 		{
-			"[-x]...", // repeat of optional doesn't make sense
+			"[-x]...",
 			&repeat{&optional{&flags{aliases: []string{"x"}}}},
 		},
 		{
